@@ -1,0 +1,16 @@
+.git
+.next
+.pnpm-store
+.spreadsheet-work
+.superpowers
+node_modules
+offline
+skills
+start-*.command
+*.log
+*.sqlite
+*.sqlite-journal
+test.db
+tsconfig.tsbuildinfo
+docs/superpowers/plans/2026-07-07-*
+docs/superpowers/specs/2026-07-07-*
