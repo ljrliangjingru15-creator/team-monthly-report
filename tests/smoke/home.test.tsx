@@ -6,7 +6,7 @@ describe("home page", () => {
   it("shows the application dashboard heading", () => {
     render(<HomePage />);
     expect(
-      screen.getByRole("heading", { name: "管理看板" }),
+      screen.getByRole("heading", { name: "首页看板" }),
     ).toBeInTheDocument();
   });
 });

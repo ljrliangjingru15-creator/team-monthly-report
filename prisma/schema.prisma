@@ -1,0 +1,606 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+}
+
+enum Role {
+  ADMIN
+  LEADER
+  COUNSELOR
+  READ_ONLY
+  PROCESS_LEAD
+  ACADEMIC_LEAD
+  CANADA_LEAD
+}
+
+enum RiskLevel {
+  NORMAL
+  WATCH
+  HIGH
+  OVERDUE
+}
+
+enum ChangeSource {
+  EXCEL_IMPORT
+  MANUAL
+  SYSTEM
+}
+
+enum EntityType {
+  USER
+  STUDENT
+  APPLICATION
+  SCHOOL_FINALIZATION
+  HANDOFF_ISSUE
+  IMPORT_CONFIG
+  IMPORT_BATCH
+  IMPORT_ISSUE
+  ADMISSION_RESULT
+  MONTHLY_REPORT
+  POSTER
+  EXPERIENCE_CASE
+  EXPORT_CONFIG
+  EXPORT_LOG
+  FILE_ASSET
+}
+
+enum ImportStatus {
+  PREVIEW
+  PENDING_CONFIRMATION
+  COMMITTED
+  PARTIAL_FAILURE
+  FAILED
+  CANCELLED
+}
+
+enum HandoffIssueStatus {
+  TODO
+  IN_PROGRESS
+  WAITING
+  RESOLVED
+  DEFERRED
+}
+
+enum HandoffIssuePriority {
+  LOW
+  MEDIUM
+  HIGH
+  URGENT
+}
+
+enum SchoolFinalizationStatus {
+  UNCONFIRMED
+  CONFIRMED
+  QUESTIONED
+  NEEDS_INFO
+  NOT_APPLICABLE
+}
+
+enum ReportStatus {
+  DRAFT
+  PREVIEWED
+  EXPORTED
+  CONFIRMED
+  ARCHIVED
+}
+
+enum PosterStatus {
+  DRAFT
+  PREVIEWED
+  EXPORTED
+  ARCHIVED
+}
+
+enum ExperienceCaseType {
+  STUDENT_SUCCESS
+  SCHOOL_EXPERIENCE
+  RISK_HANDLING
+  MATERIAL_ESSAY_INTERVIEW
+  HANDOFF_QUALITY
+}
+
+enum ExportKind {
+  MONTHLY_REPORT
+  ADMISSION_POSTER
+  INTERNAL_CASE
+  LIST_EXCEL
+  PDF
+  PNG
+}
+
+enum ExportStatus {
+  PENDING
+  COMPLETED
+  FAILED
+}
+
+model User {
+  id                   String          @id @default(cuid())
+  username             String?         @unique
+  passwordHash         String?
+  name                 String
+  role                 Role            @default(ADMIN)
+  teamName             String?
+  isActive             Boolean         @default(true)
+  lastLoginAt          DateTime?
+  createdAt            DateTime        @default(now())
+  updatedAt            DateTime        @updatedAt
+  roleAssignments      UserRole[]
+  counselorStudents    Student[]       @relation("StudentCounselor")
+  createdChangeLogs    ChangeLog[]     @relation("ChangedBy")
+  importBatches        ImportBatch[]   @relation("ImportUploadedBy")
+  createdReports       MonthlyReport[] @relation("ReportCreatedBy")
+  confirmedReports     MonthlyReport[] @relation("ReportConfirmedBy")
+  createdPosters       Poster[]        @relation("PosterCreatedBy")
+  createdCases         ExperienceCase[] @relation("CaseCreatedBy")
+  exportLogs           ExportLog[]     @relation("ExportedBy")
+  uploadedFiles        FileAsset[]     @relation("FileUploadedBy")
+
+  @@index([teamName])
+  @@index([isActive])
+}
+
+model UserRole {
+  id        String   @id @default(cuid())
+  userId    String
+  role      Role
+  scope     String?
+  createdAt DateTime @default(now())
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([userId, role, scope])
+  @@index([role, scope])
+}
+
+model Student {
+  id                  String                 @id @default(cuid())
+  season              String
+  contractNumber      String?
+  contractType        String?
+  contractAmount      Decimal?               @db.Decimal(12, 2)
+  contractAmountNotes String?
+  contractStatus      String?
+  archiveStatus       String?
+  archivedAt          DateTime?
+  name                String
+  email               String?
+  applicationTrack    String?
+  applicationType     String?
+  counselor           String?
+  counselorUserId     String?
+  midTermCounselor    String?
+  salesCounselor      String?
+  externalTeacher     String?
+  currentSchool       String?
+  highSchoolType      String?
+  curriculum          String?
+  applicationIdentity String?
+  visaStatus          String?
+  gpa                 String?
+  languageScore       String?
+  standardizedTest    String?
+  apIbALevel          String?
+  backgroundSummary   String?
+  posterBackground    String?
+  specialNotes        String?
+  clientRiskTag       String?
+  currentStage        String?
+  handoffStatus       SchoolFinalizationStatus @default(UNCONFIRMED)
+  systemRiskLevel     RiskLevel?
+  manualRiskLevel     RiskLevel?
+  finalRiskLevel      RiskLevel?
+  deletedAt           DateTime?
+  createdAt           DateTime               @default(now())
+  updatedAt           DateTime               @updatedAt
+  counselorUser       User?                  @relation("StudentCounselor", fields: [counselorUserId], references: [id])
+  applications        Application[]
+  schoolFinalizations SchoolFinalization[]
+  handoffIssues       HandoffIssue[]
+  admissionResults    AdmissionResult[]
+  monthlyReports      MonthlyReport[]
+  posters             Poster[]
+  experienceCases     ExperienceCase[]
+  fileAssets          FileAsset[]
+
+  @@index([season, counselor])
+  @@index([season, name])
+  @@index([contractNumber])
+  @@index([counselorUserId])
+  @@index([finalRiskLevel])
+  @@index([handoffStatus])
+}
+
+model Application {
+  id                       String             @id @default(cuid())
+  studentId                String
+  countryOrRegion          String?
+  schoolNameCn             String?
+  schoolNameEn             String?
+  schoolName               String?
+  applicationSystem        String?
+  college                  String?
+  program                  String?
+  major                    String?
+  secondMajor              String?
+  applicationMethod        String?
+  round                    String?
+  deadline                 DateTime?
+  requirementNotes         String?
+  needLanguageScore        String?
+  needStandardizedTest     String?
+  needTranscriptEvaluation String?
+  needPortfolio            String?
+  needInterview            String?
+  needMailing              String?
+  applicationStatus        String?
+  essayStatus              String?
+  materialStatus           String?
+  recommendationStatus     String?
+  scoreSendingStatus       String?
+  interviewStatus          String?
+  submittedAt              DateTime?
+  portalStatus             String?
+  checklistNotes           String?
+  result                   String?
+  resultDate               DateTime?
+  scholarship              String?
+  enrollmentStatus         String?
+  depositStatus            String?
+  visaStatus               String?
+  housingStatus            String?
+  finalTranscriptStatus    String?
+  systemRiskLevel          RiskLevel?
+  manualRiskLevel          RiskLevel?
+  finalRiskLevel           RiskLevel?
+  riskNotes                String?
+  nextFollowUpDate         DateTime?
+  monthlyFeedbackNotes     String?
+  cancelledAt              DateTime?
+  deletedAt                DateTime?
+  createdAt                DateTime           @default(now())
+  updatedAt                DateTime           @updatedAt
+  student                  Student            @relation(fields: [studentId], references: [id], onDelete: Cascade)
+  admissionResults         AdmissionResult[]
+
+  @@index([studentId])
+  @@index([schoolName])
+  @@index([schoolNameCn])
+  @@index([schoolNameEn])
+  @@index([deadline])
+  @@index([applicationStatus])
+  @@index([result])
+  @@index([finalRiskLevel])
+  @@index([round])
+}
+
+model SchoolFinalization {
+  id                    String                   @id @default(cuid())
+  studentId             String
+  source                String?
+  versionLabel          String?
+  expectedSchoolCount   Int?
+  confirmedSchoolCount  Int?
+  systemSchoolCount     Int?
+  contractSchoolCount   Int?
+  remainingSchoolCount  Int?
+  confirmedSchools      Json?
+  status                SchoolFinalizationStatus @default(UNCONFIRMED)
+  conflictSummary       String?
+  confirmedById         String?
+  confirmedAt           DateTime?
+  notes                 String?
+  createdAt             DateTime                 @default(now())
+  updatedAt             DateTime                 @updatedAt
+  student               Student                  @relation(fields: [studentId], references: [id], onDelete: Cascade)
+
+  @@index([studentId, status])
+  @@index([confirmedAt])
+}
+
+model HandoffIssue {
+  id                String               @id @default(cuid())
+  studentId         String
+  applicationId     String?
+  issueType         String
+  description       String
+  ownerUserId       String?
+  ownerName         String?
+  priority          HandoffIssuePriority @default(MEDIUM)
+  status            HandoffIssueStatus   @default(TODO)
+  resolution        String?
+  internalNotes     String?
+  createdById       String?
+  resolvedAt        DateTime?
+  deletedAt         DateTime?
+  createdAt         DateTime             @default(now())
+  updatedAt         DateTime             @updatedAt
+  student           Student              @relation(fields: [studentId], references: [id], onDelete: Cascade)
+
+  @@index([studentId])
+  @@index([ownerUserId])
+  @@index([ownerName])
+  @@index([status, priority])
+  @@index([issueType])
+}
+
+model ImportConfig {
+  id                 String      @id @default(cuid())
+  name               String
+  importType         String
+  description        String?
+  sheetRules         Json
+  headerRules        Json
+  fieldMappings      Json
+  skippedFields      Json?
+  sensitiveRules     Json
+  studentMatchRules  Json
+  applicationMatchRules Json?
+  conflictRules      Json
+  isDefault          Boolean     @default(false)
+  isActive           Boolean     @default(true)
+  createdById        String?
+  updatedById        String?
+  createdAt          DateTime    @default(now())
+  updatedAt          DateTime    @updatedAt
+  batches            ImportBatch[]
+
+  @@index([importType, isDefault])
+  @@index([isActive])
+}
+
+model ImportBatch {
+  id                           String       @id @default(cuid())
+  fileName                     String
+  fileHash                     String?
+  uploadedBy                   String?
+  uploadedById                 String?
+  season                       String
+  importType                   String
+  importConfigId               String?
+  selectedSheets               Json?
+  totalRows                    Int          @default(0)
+  createdStudents              Int          @default(0)
+  updatedStudents              Int          @default(0)
+  createdApplications          Int          @default(0)
+  updatedApplications          Int          @default(0)
+  createdAdmissionResults      Int          @default(0)
+  updatedAdmissionResults      Int          @default(0)
+  conflictCount                Int          @default(0)
+  skippedFieldCount            Int          @default(0)
+  sensitiveFieldCount          Int          @default(0)
+  suspectedDeletedApplications Int          @default(0)
+  status                       ImportStatus @default(PREVIEW)
+  previewSummary               Json?
+  committedAt                  DateTime?
+  uploadedAt                   DateTime     @default(now())
+  uploadedByUser               User?        @relation("ImportUploadedBy", fields: [uploadedById], references: [id])
+  importConfig                 ImportConfig? @relation(fields: [importConfigId], references: [id])
+  issues                       ImportIssue[]
+  changeLogs                   ChangeLog[]
+
+  @@index([season, importType])
+  @@index([status])
+  @@index([uploadedById])
+  @@index([importConfigId])
+}
+
+model ImportIssue {
+  id            String      @id @default(cuid())
+  importBatchId String
+  sheetName     String?
+  rowNumber     Int?
+  columnName    String?
+  issueType     String
+  severity      String      @default("warning")
+  message       String
+  resolution    String?
+  resolvedById  String?
+  resolvedAt    DateTime?
+  createdAt     DateTime    @default(now())
+  importBatch   ImportBatch @relation(fields: [importBatchId], references: [id], onDelete: Cascade)
+
+  @@index([importBatchId, issueType])
+  @@index([severity])
+}
+
+model AdmissionResult {
+  id                String        @id @default(cuid())
+  studentId         String
+  applicationId     String?
+  schoolName        String
+  program           String?
+  major             String?
+  result            String
+  resultDate        DateTime?
+  enrollmentStatus  String?
+  scholarship       String?
+  backgroundSummary String?
+  posterBackground  String?
+  canGeneratePoster Boolean       @default(false)
+  posterGeneratedAt DateTime?
+  caseGeneratedAt   DateTime?
+  notes             String?
+  createdAt         DateTime      @default(now())
+  updatedAt         DateTime      @updatedAt
+  student           Student       @relation(fields: [studentId], references: [id], onDelete: Cascade)
+  application       Application?  @relation(fields: [applicationId], references: [id], onDelete: SetNull)
+  posters           Poster[]
+  experienceCases   ExperienceCase[]
+
+  @@index([studentId])
+  @@index([applicationId])
+  @@index([result])
+  @@index([schoolName])
+}
+
+model MonthlyReport {
+  id                  String       @id @default(cuid())
+  studentId           String
+  month               String
+  title               String?
+  includeSchoolDetail Boolean      @default(true)
+  includeRisks        Boolean      @default(true)
+  includeClientTasks  Boolean      @default(true)
+  completedThisMonth  String?
+  nextMonthPlan       String?
+  nextStageFocus      String?
+  schoolProgress      Json?
+  content             String       @default("")
+  status              ReportStatus @default(DRAFT)
+  createdById         String?
+  confirmedById       String?
+  exportedAt          DateTime?
+  confirmedAt         DateTime?
+  createdAt           DateTime     @default(now())
+  updatedAt           DateTime     @updatedAt
+  student             Student      @relation(fields: [studentId], references: [id], onDelete: Cascade)
+  createdBy           User?        @relation("ReportCreatedBy", fields: [createdById], references: [id])
+  confirmedBy         User?        @relation("ReportConfirmedBy", fields: [confirmedById], references: [id])
+  exportLogs          ExportLog[]
+
+  @@unique([studentId, month])
+  @@index([status])
+  @@index([createdById])
+}
+
+model Poster {
+  id                String          @id @default(cuid())
+  studentId         String
+  admissionResultId String?
+  title             String?
+  templateKey       String?
+  schoolName        String?
+  result            String?
+  content           Json?
+  watermark         String?
+  status            PosterStatus    @default(DRAFT)
+  createdById       String?
+  exportedAt        DateTime?
+  createdAt         DateTime        @default(now())
+  updatedAt         DateTime        @updatedAt
+  student           Student         @relation(fields: [studentId], references: [id], onDelete: Cascade)
+  admissionResult   AdmissionResult? @relation(fields: [admissionResultId], references: [id], onDelete: SetNull)
+  createdBy         User?           @relation("PosterCreatedBy", fields: [createdById], references: [id])
+  exportLogs        ExportLog[]
+
+  @@index([studentId])
+  @@index([admissionResultId])
+  @@index([status])
+}
+
+model ExperienceCase {
+  id                String             @id @default(cuid())
+  type              ExperienceCaseType
+  title             String
+  studentId         String?
+  admissionResultId String?
+  schoolName        String?
+  season            String
+  counselorName     String?
+  createdById       String?
+  backgroundSummary String?
+  challenge         String?
+  handling          String?
+  outcome           String?
+  reusableInsight   String?
+  internalTags      Json?
+  isExternalUsable  Boolean            @default(false)
+  deletedAt         DateTime?
+  createdAt         DateTime           @default(now())
+  updatedAt         DateTime           @updatedAt
+  student           Student?           @relation(fields: [studentId], references: [id], onDelete: SetNull)
+  admissionResult   AdmissionResult?   @relation(fields: [admissionResultId], references: [id], onDelete: SetNull)
+  createdBy         User?              @relation("CaseCreatedBy", fields: [createdById], references: [id])
+
+  @@index([type])
+  @@index([season])
+  @@index([schoolName])
+  @@index([studentId])
+}
+
+model ExportConfig {
+  id              String      @id @default(cuid())
+  name            String
+  kind            ExportKind
+  templateKey     String?
+  fieldRules      Json
+  templateRules   Json?
+  styleRules      Json?
+  watermarkRules  Json?
+  redactionRules  Json
+  isDefault       Boolean     @default(false)
+  isActive        Boolean     @default(true)
+  createdById     String?
+  updatedById     String?
+  createdAt       DateTime    @default(now())
+  updatedAt       DateTime    @updatedAt
+  exportLogs      ExportLog[]
+
+  @@index([kind, isDefault])
+  @@index([isActive])
+}
+
+model ExportLog {
+  id              String       @id @default(cuid())
+  exportConfigId  String?
+  kind            ExportKind
+  status          ExportStatus @default(PENDING)
+  entityType      EntityType
+  entityId        String
+  fileName        String?
+  fileAssetId     String?
+  exportedById    String?
+  exportedAt      DateTime     @default(now())
+  errorMessage    String?
+  monthlyReportId String?
+  posterId        String?
+  exportConfig    ExportConfig? @relation(fields: [exportConfigId], references: [id], onDelete: SetNull)
+  exportedBy      User?         @relation("ExportedBy", fields: [exportedById], references: [id])
+  monthlyReport   MonthlyReport? @relation(fields: [monthlyReportId], references: [id], onDelete: SetNull)
+  poster          Poster?       @relation(fields: [posterId], references: [id], onDelete: SetNull)
+
+  @@index([kind, status])
+  @@index([entityType, entityId])
+  @@index([exportedById])
+}
+
+model FileAsset {
+  id           String     @id @default(cuid())
+  studentId    String?
+  entityType   EntityType?
+  entityId     String?
+  fileName     String
+  mimeType     String?
+  storagePath  String
+  fileSize     Int?
+  uploadedById String?
+  createdAt    DateTime   @default(now())
+  student      Student?   @relation(fields: [studentId], references: [id], onDelete: SetNull)
+  uploadedBy   User?      @relation("FileUploadedBy", fields: [uploadedById], references: [id])
+
+  @@index([studentId])
+  @@index([entityType, entityId])
+}
+
+model ChangeLog {
+  id            String        @id @default(cuid())
+  entityType    EntityType
+  entityId      String
+  fieldName     String
+  oldValue      String?
+  newValue      String?
+  changedById   String
+  changeSource  ChangeSource
+  importBatchId String?
+  changedAt     DateTime      @default(now())
+  changedBy     User          @relation("ChangedBy", fields: [changedById], references: [id])
+  importBatch   ImportBatch?  @relation(fields: [importBatchId], references: [id])
+
+  @@index([entityType, entityId])
+  @@index([changedById])
+  @@index([importBatchId])
+  @@index([changedAt])
+}

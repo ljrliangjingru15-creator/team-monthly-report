@@ -1,25 +1,30 @@
 {
   "name": "application-progress-manager",
   "version": "1.0.0",
-  "description": "",
+  "private": true,
+  "description": "Next.js web app for North America application monthly feedback report generation.",
   "scripts": {
     "dev": "next dev",
+    "dev:local": "next dev --hostname 127.0.0.1 --port 3000",
+    "dev:monthly": "rm -rf .next/dev && next dev --hostname 0.0.0.0 --port 3007",
     "build": "next build",
     "start": "next start",
+    "deploy:vercel": "vercel --prod",
     "lint": "eslint .",
     "test": "vitest",
     "test:run": "vitest run",
-    "test:e2e": "playwright test"
+    "test:e2e": "playwright test",
+    "db:up": "docker compose up -d db",
+    "db:down": "docker compose down",
+    "db:generate": "prisma generate",
+    "db:migrate": "prisma migrate dev"
   },
   "keywords": [],
   "author": "",
-  "license": "ISC",
-  "devEngines": {
-    "packageManager": {
-      "name": "pnpm",
-      "version": "^11.7.0",
-      "onFail": "download"
-    }
+  "license": "UNLICENSED",
+  "packageManager": "pnpm@11.7.0",
+  "engines": {
+    "node": ">=22.0.0"
   },
   "type": "module",
   "dependencies": {
@@ -39,6 +44,7 @@
   },
   "devDependencies": {
     "@playwright/test": "^1.61.1",
+    "@tailwindcss/postcss": "^4.3.2",
     "@testing-library/jest-dom": "^6.9.1",
     "@testing-library/react": "^16.3.2",
     "@types/node": "^26.1.0",
