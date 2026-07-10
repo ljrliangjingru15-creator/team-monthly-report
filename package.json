@@ -25,7 +25,7 @@
   "license": "UNLICENSED",
   "packageManager": "pnpm@11.7.0",
   "engines": {
-    "node": ">=22.0.0"
+    "node": "22.x"
   },
   "type": "module",
   "dependencies": {

@@ -11,6 +11,16 @@
 - 文件存储：当前不上传到云端，用户选择的 Excel、报告和附件只在浏览器会话中处理。
 - 第三方 API：默认不依赖第三方 API。
 
+## 当前生产环境
+
+- Production Domain：https://monthly-report-deploy-iota.vercel.app
+- 月报工具入口：https://monthly-report-deploy-iota.vercel.app/monthly-reports
+- Vercel Project：`ljrliangjingru15-5693s-projects/monthly-report-deploy`
+- Project ID：`prj_XgbRm6lzTBPQWJev8CC20s2KnZqv`
+- Org ID：`team_TGJ9jkGu1qnmE1pwMCW35AmY`
+
+当前项目已经可以脱离本机电脑、终端和局域网运行。只要 Vercel 项目保持有效，Production Domain 会保持稳定。
+
 ## 推荐正式部署
 
 优先部署到 Vercel Production。
@@ -83,7 +93,7 @@ Vercel 配置见 `vercel.json`：
 4. Install Command 使用 `pnpm install --frozen-lockfile`。
 5. Build Command 使用 `pnpm build`。
 6. 环境变量中设置：
-   - `NEXT_PUBLIC_APP_URL=https://你的生产域名`
+   - `NEXT_PUBLIC_APP_URL=https://monthly-report-deploy-iota.vercel.app`
    - `ENABLE_MACOS_OCR=false`
 7. 点击 Deploy。
 8. 部署完成后，在 Vercel Project Settings 的 Domains 中确认 Production Domain。
