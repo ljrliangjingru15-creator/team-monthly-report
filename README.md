@@ -15,11 +15,12 @@
 
 - Production Domain：https://monthly-report-deploy-iota.vercel.app
 - 月报工具入口：https://monthly-report-deploy-iota.vercel.app/monthly-reports
+- GitHub Repository：https://github.com/ljrliangjingru15-creator/team-monthly-report
 - Vercel Project：`ljrliangjingru15-5693s-projects/monthly-report-deploy`
 - Project ID：`prj_XgbRm6lzTBPQWJev8CC20s2KnZqv`
 - Org ID：`team_TGJ9jkGu1qnmE1pwMCW35AmY`
 
-当前项目已经可以脱离本机电脑、终端和局域网运行。只要 Vercel 项目保持有效，Production Domain 会保持稳定。
+当前项目已经可以脱离本机电脑、终端和局域网运行。GitHub `main` 分支已连接 Vercel 自动部署；只要 Vercel 项目保持有效，Production Domain 会保持稳定。
 
 ## 推荐正式部署
 
