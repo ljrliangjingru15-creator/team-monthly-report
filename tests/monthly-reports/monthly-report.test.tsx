@@ -953,15 +953,19 @@ describe("monthly report application type config", () => {
       ["美国中学", "美国留学申请阶段报告", "中学申请"],
       ["加拿大中学", "加拿大申请阶段反馈报告", "中学申请"],
       ["加拿大本科", "加拿大申请阶段反馈报告", "本科申请"],
+      ["美国硕博", "美国硕博申请阶段报告", "美国硕博"],
+      ["加拿大硕博", "加拿大申请阶段反馈报告", "加拿大硕博"],
       ["综合评价申请", "综合评价申请反馈报告", "广东省"],
       ["中外合办申请", "中外合办多元路径反馈报告", "大湾区"],
     ]);
   });
 
-  it("keeps seven configurable application types with timelines and theme tokens", () => {
-    expect(APPLICATION_TYPE_OPTIONS).toHaveLength(7);
+  it("keeps nine configurable application types with timelines and theme tokens", () => {
+    expect(APPLICATION_TYPE_OPTIONS).toHaveLength(9);
 
     const transfer = getMonthlyReportApplicationConfig("美国本科转学");
+    const usGraduate = getMonthlyReportApplicationConfig("美国硕博");
+    const canadaGraduate = getMonthlyReportApplicationConfig("加拿大硕博");
 
     expect(transfer.timeline).toContain("文书写作沟通");
     expect(transfer.stageKeywords).toEqual(
@@ -974,6 +978,36 @@ describe("monthly report application type config", () => {
     });
     expect(transfer.attachmentRules.enabled).toBe(true);
     expect(transfer.todoRules.enabled).toBe(true);
+    expect(usGraduate.timeline).toEqual([
+      "文书素材收集",
+      "简历CV写作",
+      "推荐信RL写作",
+      "主文书SOP写作",
+      "附加文书写作",
+      "第一所院校提交",
+      "第二所院校提交",
+      "第三所院校提交",
+      "第四所院校提交",
+      "第五所院校提交",
+      "第六所院校提交",
+      "第七所院校提交",
+      "第八所院校提交",
+      "第九所院校提交",
+      "第十所院校提交",
+      "结果跟踪",
+      "确认入读",
+      "行前准备",
+      "签证准备",
+    ]);
+    expect(canadaGraduate.timeline).toEqual([
+      "文书素材收集",
+      "文书写作",
+      "院校提交",
+      "结果跟踪",
+      "确认入读",
+      "行前准备",
+      "签证准备",
+    ]);
   });
 });
 
