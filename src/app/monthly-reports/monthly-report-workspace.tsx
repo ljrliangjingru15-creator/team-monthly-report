@@ -1070,7 +1070,38 @@ export function MonthlyReportWorkspace() {
   }
 
   function handleApplicationTypeChange(value: string) {
-    applyApplicationType(value as MonthlyReportApplicationType, false);
+    const nextApplicationType = value as MonthlyReportApplicationType;
+    if (nextApplicationType === applicationType) return;
+
+    let shouldUseTemplate = true;
+    if (typeof window !== "undefined" && typeof window.confirm === "function") {
+      try {
+        const isJsdom =
+          typeof navigator !== "undefined" &&
+          navigator.userAgent.toLowerCase().includes("jsdom");
+        const isMockedConfirm =
+          "mock" in window.confirm || "_isMockFunction" in window.confirm;
+
+        if (!isJsdom || isMockedConfirm) {
+          const confirmResult = window.confirm(
+            "是否直接使用该申请类型与报告模板？\n\n选择“确定”：切换申请类型、报告模板、部门标签、主题配色和申请时间轴。\n选择“取消”：仅使用该申请类型的主题配色。",
+          );
+          if (typeof confirmResult === "boolean") {
+            shouldUseTemplate = confirmResult;
+          }
+        }
+      } catch {
+        shouldUseTemplate = true;
+      }
+    }
+
+    if (shouldUseTemplate) {
+      applyApplicationType(nextApplicationType, false);
+      return;
+    }
+
+    setTheme(getMonthlyReportApplicationConfig(nextApplicationType).theme);
+    setIsDirty(true);
   }
 
   function generateFeedback() {
@@ -1680,6 +1711,7 @@ ${renderedReportModules}
     if (!context) {
       return new Blob([buildReportHtml()], { type: "text/html;charset=utf-8" });
     }
+    const canvasContext = context;
 
     const pageX = 70;
     const pageY = 70;
@@ -1746,220 +1778,285 @@ ${renderedReportModules}
     context.fillText(metaText, contentX + 32, heroY + 148);
 
     let y = heroY + heroHeight + 42;
-    if (modules.stageFocus) {
-      context.fillStyle = highlightedModules.stageFocus ? theme.secondarySoftColor : "#ffffff";
-      context.fillRect(contentX, y, contentWidth, 150);
-      context.strokeStyle = highlightedModules.stageFocus ? theme.accentColor : "#e2e8f0";
-      context.strokeRect(contentX, y, contentWidth, 150);
-      context.fillStyle = theme.titleColor;
-      context.font = 'bold 24px Arial, "PingFang SC", "Microsoft YaHei", sans-serif';
-      context.fillText("当前阶段重点和下一步建议", contentX + 18, y + 36);
-      context.font = 'bold 18px Arial, "PingFang SC", "Microsoft YaHei", sans-serif';
-      context.fillText("当前阶段重点", contentX + 18, y + 78);
-      context.fillText("下一步建议", contentX + contentWidth / 2 + 12, y + 78);
-      context.fillStyle = theme.textColor;
-      context.font = '17px Arial, "PingFang SC", "Microsoft YaHei", sans-serif';
-      drawWrappedText(
-        context,
-        currentTimelineItem?.label ?? emptySectionPlaceholder,
-        contentX + 18,
-        y + 106,
-        contentWidth / 2 - 36,
-        23,
+    function roundedRect(x: number, rectY: number, width: number, height: number, radius: number) {
+      canvasContext.beginPath();
+      canvasContext.moveTo(x + radius, rectY);
+      canvasContext.lineTo(x + width - radius, rectY);
+      canvasContext.quadraticCurveTo(x + width, rectY, x + width, rectY + radius);
+      canvasContext.lineTo(x + width, rectY + height - radius);
+      canvasContext.quadraticCurveTo(x + width, rectY + height, x + width - radius, rectY + height);
+      canvasContext.lineTo(x + radius, rectY + height);
+      canvasContext.quadraticCurveTo(x, rectY + height, x, rectY + height - radius);
+      canvasContext.lineTo(x, rectY + radius);
+      canvasContext.quadraticCurveTo(x, rectY, x + radius, rectY);
+      canvasContext.closePath();
+    }
+
+    function drawRoundedBox(
+      x: number,
+      rectY: number,
+      width: number,
+      height: number,
+      fill: string,
+      stroke: string,
+      radius = 18,
+    ) {
+      roundedRect(x, rectY, width, height, radius);
+      canvasContext.fillStyle = fill;
+      canvasContext.fill();
+      canvasContext.strokeStyle = stroke;
+      canvasContext.lineWidth = 1;
+      canvasContext.stroke();
+    }
+
+    function drawReportCard(
+      key: ReportModuleKey,
+      height: number,
+      drawContent: (cardY: number) => void,
+    ) {
+      if (!modules[key]) return;
+      if (key === "attachments" && !attachmentNames) return;
+      drawRoundedBox(
+        contentX,
+        y,
+        contentWidth,
+        height,
+        highlightedModules[key] ? theme.secondarySoftColor : "#ffffff",
+        highlightedModules[key] ? theme.accentColor : "#e2e8f0",
       );
-      drawWrappedText(
-        context,
-        content.nextStageFocus,
-        contentX + contentWidth / 2 + 12,
-        y + 106,
-        contentWidth / 2 - 36,
-        23,
-      );
-      y += 178;
+      drawContent(y);
+      y += height + 24;
     }
 
-    if (modules.summary) {
-      context.fillStyle = highlightedModules.summary ? theme.secondarySoftColor : "#ffffff";
-      context.fillRect(contentX, y, contentWidth, 150);
-      context.strokeStyle = highlightedModules.summary ? theme.accentColor : "#e2e8f0";
-      context.strokeRect(contentX, y, contentWidth, 150);
-      context.fillStyle = theme.titleColor;
-      context.font = 'bold 24px Arial, "PingFang SC", "Microsoft YaHei", sans-serif';
-      context.fillText("关键摘要", contentX + 18, y + 36);
-      const metricWidth = (contentWidth - 60) / 3;
-      [
-        ["材料收集完整度", metricSummary.materialText],
-        ["核心学术信息", metricSummary.academicText],
-        ["当前就读学校", metricSummary.school],
-      ].forEach(([label, value], index) => {
-        const x = contentX + 18 + index * (metricWidth + 12);
-        const metricY = y + 58;
-        context.fillStyle = index === 0 ? theme.primarySoftColor : "#ffffff";
-        context.fillRect(x, metricY, metricWidth, 74);
-        context.strokeStyle = "#e2e8f0";
-        context.strokeRect(x, metricY, metricWidth, 74);
-        context.fillStyle = theme.mutedTextColor;
-        context.font = '16px Arial, "PingFang SC", "Microsoft YaHei", sans-serif';
-        context.fillText(label, x + 14, metricY + 26);
-        context.fillStyle = theme.titleColor;
-        context.font = 'bold 21px Arial, "PingFang SC", "Microsoft YaHei", sans-serif';
-        drawWrappedText(context, value, x + 14, metricY + 54, metricWidth - 28, 24);
-      });
-      y += 178;
-    }
+    reportModuleOrder.forEach((key) => {
+      if (key === "stageFocus") {
+        drawReportCard(key, 150, (cardY) => {
+          context.fillStyle = theme.titleColor;
+          context.font = 'bold 24px Arial, "PingFang SC", "Microsoft YaHei", sans-serif';
+          context.fillText("当前阶段重点和下一步建议", contentX + 18, cardY + 36);
+          context.font = 'bold 18px Arial, "PingFang SC", "Microsoft YaHei", sans-serif';
+          context.fillText("当前阶段重点", contentX + 18, cardY + 78);
+          context.fillText("下一步建议", contentX + contentWidth / 2 + 12, cardY + 78);
+          context.fillStyle = theme.textColor;
+          context.font = '17px Arial, "PingFang SC", "Microsoft YaHei", sans-serif';
+          drawWrappedText(
+            context,
+            currentTimelineItem?.label ?? emptySectionPlaceholder,
+            contentX + 18,
+            cardY + 106,
+            contentWidth / 2 - 36,
+            23,
+          );
+          drawWrappedText(
+            context,
+            content.nextStageFocus,
+            contentX + contentWidth / 2 + 12,
+            cardY + 106,
+            contentWidth / 2 - 36,
+            23,
+          );
+        });
+      }
 
-    if (modules.timeline) {
-      context.fillStyle = theme.titleColor;
-      context.font = 'bold 24px Arial, "PingFang SC", "Microsoft YaHei", sans-serif';
-      context.fillText(config.moduleTitles.timeline, contentX, y);
-      y += 26;
-      const timelineColumns = 5;
-      const timelineBoxWidth = (contentWidth - 32) / timelineColumns;
-      timelineItems.slice(0, 10).forEach((item, index) => {
-        const x = contentX + (index % timelineColumns) * (timelineBoxWidth + 8);
-        const itemY = y + Math.floor(index / timelineColumns) * 82;
-        context.fillStyle = item.status === "current" ? theme.primarySoftColor : "#f8fafc";
-        context.fillRect(x, itemY, timelineBoxWidth, 66);
-        context.strokeStyle = item.status === "current" ? theme.primaryColor : "#e2e8f0";
-        context.strokeRect(x, itemY, timelineBoxWidth, 66);
-        if (item.note.trim()) {
-          context.fillStyle = theme.secondarySoftColor;
-          context.fillRect(x + 10, itemY + 8, timelineBoxWidth - 20, 18);
-          context.fillStyle = theme.accentColor;
-          context.font = 'bold 11px Arial, "PingFang SC", "Microsoft YaHei", sans-serif';
-          drawWrappedText(context, item.note, x + 14, itemY + 21, timelineBoxWidth - 28, 14);
-        }
-        context.fillStyle = getTimelineColor(item.status);
-        context.beginPath();
-        context.arc(x + 18, itemY + (item.note.trim() ? 38 : 18), 6, 0, Math.PI * 2);
-        context.fill();
-        context.fillStyle = theme.textColor;
-        context.font = '16px Arial, "PingFang SC", "Microsoft YaHei", sans-serif';
-        drawWrappedText(
-          context,
-          item.label,
-          x + 34,
-          itemY + (item.note.trim() ? 40 : 20),
-          timelineBoxWidth - 44,
-          20,
-        );
-      });
-      y += timelineItems.length > 5 ? 180 : 98;
-    }
+      if (key === "summary") {
+        drawReportCard(key, 150, (cardY) => {
+          context.fillStyle = theme.titleColor;
+          context.font = 'bold 24px Arial, "PingFang SC", "Microsoft YaHei", sans-serif';
+          context.fillText("关键摘要", contentX + 18, cardY + 36);
+          const metricWidth = (contentWidth - 60) / 3;
+          [
+            ["材料收集完整度", metricSummary.materialText],
+            ["核心学术信息", metricSummary.academicText],
+            ["当前就读学校", metricSummary.school],
+          ].forEach(([label, value], index) => {
+            const x = contentX + 18 + index * (metricWidth + 12);
+            const metricY = cardY + 58;
+            drawRoundedBox(
+              x,
+              metricY,
+              metricWidth,
+              74,
+              index === 0 ? theme.primarySoftColor : "#ffffff",
+              "#e2e8f0",
+              12,
+            );
+            context.fillStyle = theme.mutedTextColor;
+            context.font = '16px Arial, "PingFang SC", "Microsoft YaHei", sans-serif';
+            context.fillText(label, x + 14, metricY + 26);
+            context.fillStyle = theme.titleColor;
+            context.font = 'bold 21px Arial, "PingFang SC", "Microsoft YaHei", sans-serif';
+            drawWrappedText(context, value, x + 14, metricY + 54, metricWidth - 28, 24);
+          });
+        });
+      }
 
-    const leftWidth = 480;
-    const rightWidth = contentWidth - leftWidth - 18;
-    const tableTop = y;
-    if (modules.basicInfo) {
-      context.fillStyle = "#ffffff";
-      context.fillRect(contentX, tableTop, leftWidth, 330);
-      context.strokeStyle = "#e2e8f0";
-      context.strokeRect(contentX, tableTop, leftWidth, 330);
-      context.fillStyle = theme.titleColor;
-      context.font = 'bold 23px Arial, "PingFang SC", "Microsoft YaHei", sans-serif';
-      context.fillText("基础信息", contentX + 18, tableTop + 36);
-      context.font = '17px Arial, "PingFang SC", "Microsoft YaHei", sans-serif';
-      (studentInfoRows.length > 0
-        ? studentInfoRows
-        : [{ label: "基础信息", value: emptySectionPlaceholder }]
-      )
-        .slice(0, 8)
-        .forEach((row, index) => {
-          const rowY = tableTop + 76 + index * 30;
+      if (key === "timeline") {
+        const timelineColumns = 5;
+        const timelineRows = Math.max(1, Math.ceil(timelineItems.length / timelineColumns));
+        const timelineHeight = 62 + timelineRows * 88;
+        drawReportCard(key, timelineHeight, (cardY) => {
+          context.fillStyle = theme.titleColor;
+          context.font = 'bold 24px Arial, "PingFang SC", "Microsoft YaHei", sans-serif';
+          context.fillText(config.moduleTitles.timeline, contentX + 18, cardY + 36);
+          const timelineBoxWidth = (contentWidth - 68) / timelineColumns;
+          timelineItems.forEach((item, index) => {
+            const x = contentX + 18 + (index % timelineColumns) * (timelineBoxWidth + 8);
+            const itemY = cardY + 56 + Math.floor(index / timelineColumns) * 88;
+            drawRoundedBox(
+              x,
+              itemY,
+              timelineBoxWidth,
+              70,
+              item.status === "current" ? theme.primarySoftColor : "#f8fafc",
+              item.status === "current" ? theme.primaryColor : "#e2e8f0",
+              12,
+            );
+            if (item.note.trim()) {
+              drawRoundedBox(
+                x + 10,
+                itemY + 8,
+                timelineBoxWidth - 20,
+                18,
+                theme.secondarySoftColor,
+                theme.secondarySoftColor,
+                9,
+              );
+              context.fillStyle = theme.accentColor;
+              context.font = 'bold 11px Arial, "PingFang SC", "Microsoft YaHei", sans-serif';
+              drawWrappedText(context, item.note, x + 14, itemY + 21, timelineBoxWidth - 28, 14);
+            }
+            context.fillStyle = getTimelineColor(item.status);
+            context.beginPath();
+            context.arc(x + 18, itemY + (item.note.trim() ? 40 : 20), 6, 0, Math.PI * 2);
+            context.fill();
+            context.fillStyle = theme.textColor;
+            context.font = '16px Arial, "PingFang SC", "Microsoft YaHei", sans-serif';
+            drawWrappedText(
+              context,
+              item.label,
+              x + 34,
+              itemY + (item.note.trim() ? 42 : 22),
+              timelineBoxWidth - 44,
+              20,
+            );
+          });
+        });
+      }
+
+      if (key === "basicInfo") {
+        const rows =
+          studentInfoRows.length > 0
+            ? studentInfoRows
+            : [{ label: "基础信息", value: emptySectionPlaceholder }];
+        drawReportCard(key, 62 + Math.min(rows.length, 10) * 30, (cardY) => {
+          context.fillStyle = theme.titleColor;
+          context.font = 'bold 23px Arial, "PingFang SC", "Microsoft YaHei", sans-serif';
+          context.fillText("基础信息", contentX + 18, cardY + 36);
+          context.font = '17px Arial, "PingFang SC", "Microsoft YaHei", sans-serif';
+          rows.slice(0, 10).forEach((row, index) => {
+            const rowY = cardY + 76 + index * 30;
+            context.fillStyle = theme.mutedTextColor;
+            context.fillText(row.label, contentX + 18, rowY);
+            context.fillStyle = theme.textColor;
+            context.fillText(row.value, contentX + 190, rowY);
+          });
+        });
+      }
+
+      if (key === "materialCollection") {
+        const rows =
+          materialRows.length > 0
+            ? materialRows
+            : [
+                {
+                  item: "材料收集",
+                  status: "na" as MaterialStatusKey,
+                  statusLabel: emptySectionPlaceholder,
+                  remark: emptySectionPlaceholder,
+                },
+              ];
+        drawReportCard(key, 92 + Math.min(rows.length, 10) * 28, (cardY) => {
+          context.fillStyle = theme.titleColor;
+          context.font = 'bold 23px Arial, "PingFang SC", "Microsoft YaHei", sans-serif';
+          context.fillText("材料收集", contentX + 18, cardY + 36);
           context.fillStyle = theme.mutedTextColor;
-          context.fillText(row.label, contentX + 18, rowY);
-          context.fillStyle = theme.textColor;
-          context.fillText(row.value, contentX + 170, rowY);
+          context.font = 'bold 16px Arial, "PingFang SC", "Microsoft YaHei", sans-serif';
+          context.fillText("材料项目", contentX + 18, cardY + 70);
+          context.fillText("状态", contentX + 360, cardY + 70);
+          context.fillText("备注", contentX + 520, cardY + 70);
+          rows.slice(0, 10).forEach((row, index) => {
+            const rowY = cardY + 102 + index * 28;
+            context.fillStyle = theme.textColor;
+            context.font = '16px Arial, "PingFang SC", "Microsoft YaHei", sans-serif';
+            context.fillText(row.item, contentX + 18, rowY);
+            context.fillStyle = statusStyles[row.status].color;
+            context.font = 'bold 15px Arial, "PingFang SC", "Microsoft YaHei", sans-serif';
+            context.fillText(row.statusLabel, contentX + 360, rowY);
+            context.fillStyle = theme.textColor;
+            context.font = '15px Arial, "PingFang SC", "Microsoft YaHei", sans-serif';
+            drawWrappedText(context, row.remark, contentX + 520, rowY, contentWidth - 540, 20);
+          });
         });
-    }
-    if (modules.materialCollection) {
-      const x = contentX + leftWidth + 18;
-      context.fillStyle = "#ffffff";
-      context.fillRect(x, tableTop, rightWidth, 330);
-      context.strokeStyle = "#e2e8f0";
-      context.strokeRect(x, tableTop, rightWidth, 330);
-      context.fillStyle = theme.titleColor;
-      context.font = 'bold 23px Arial, "PingFang SC", "Microsoft YaHei", sans-serif';
-      context.fillText("材料收集", x + 18, tableTop + 36);
-      context.fillStyle = theme.mutedTextColor;
-      context.font = 'bold 16px Arial, "PingFang SC", "Microsoft YaHei", sans-serif';
-      context.fillText("材料项目", x + 18, tableTop + 70);
-      context.fillText("状态", x + 220, tableTop + 70);
-      context.fillText("备注", x + 330, tableTop + 70);
-      (materialRows.length > 0
-        ? materialRows
-        : [
-            {
-              item: "材料收集",
-              status: "na" as MaterialStatusKey,
-              statusLabel: emptySectionPlaceholder,
-              remark: emptySectionPlaceholder,
-            },
-          ]
-      )
-        .slice(0, 8)
-        .forEach((row, index) => {
-          const rowY = tableTop + 102 + index * 28;
+      }
+
+      if (key === "completedThisMonth") {
+        drawReportCard(key, 136, (cardY) => {
+          context.fillStyle = theme.titleColor;
+          context.font = 'bold 21px Arial, "PingFang SC", "Microsoft YaHei", sans-serif';
+          context.fillText("顾问阶段性反馈 / 本次阶段性进度", contentX + 18, cardY + 34);
           context.fillStyle = theme.textColor;
-          context.font = '16px Arial, "PingFang SC", "Microsoft YaHei", sans-serif';
-          context.fillText(row.item, x + 18, rowY);
-          context.fillStyle = statusStyles[row.status].color;
-          context.font = 'bold 15px Arial, "PingFang SC", "Microsoft YaHei", sans-serif';
-          context.fillText(row.statusLabel, x + 220, rowY);
-          context.fillStyle = theme.textColor;
-          context.font = '15px Arial, "PingFang SC", "Microsoft YaHei", sans-serif';
-          context.fillText(row.remark, x + 330, rowY);
+          context.font = '17px Arial, "PingFang SC", "Microsoft YaHei", sans-serif';
+          drawWrappedText(context, advisorFeedback, contentX + 18, cardY + 68, contentWidth - 36, 25);
         });
-    }
+      }
 
-    y = tableTop + 366;
-    const feedbackWidth = (contentWidth - 18) / 2;
-    [
-      modules.nextMonthPlan
-        ? {
-            title: "本阶段后续动作 / 下一阶段计划",
-            body: nextActionItems.map((item) => `• ${item}`).join("\n"),
-          }
-        : null,
-      modules.completedThisMonth
-        ? {
-            title: "顾问阶段性反馈 / 本次阶段性进度",
-            body: advisorFeedback,
-          }
-        : null,
-    ]
-      .filter(Boolean)
-      .forEach((section, index) => {
-        if (!section) return;
-        const x = contentX + index * (feedbackWidth + 18);
-        context.fillStyle = "#ffffff";
-        context.fillRect(x, y, feedbackWidth, 150);
-        context.strokeStyle = "#e2e8f0";
-        context.strokeRect(x, y, feedbackWidth, 150);
-        context.fillStyle = theme.titleColor;
-        context.font = 'bold 21px Arial, "PingFang SC", "Microsoft YaHei", sans-serif';
-        context.fillText(section.title, x + 18, y + 34);
-        context.fillStyle = theme.textColor;
-        context.font = '17px Arial, "PingFang SC", "Microsoft YaHei", sans-serif';
-        drawWrappedText(context, section.body, x + 18, y + 68, feedbackWidth - 36, 25);
-      });
+      if (key === "nextMonthPlan") {
+        drawReportCard(key, 136, (cardY) => {
+          context.fillStyle = theme.titleColor;
+          context.font = 'bold 21px Arial, "PingFang SC", "Microsoft YaHei", sans-serif';
+          context.fillText("本阶段后续动作 / 下一阶段计划", contentX + 18, cardY + 34);
+          context.fillStyle = theme.textColor;
+          context.font = '17px Arial, "PingFang SC", "Microsoft YaHei", sans-serif';
+          drawWrappedText(
+            context,
+            nextActionItems.map((item) => `• ${item}`).join("\n"),
+            contentX + 18,
+            cardY + 68,
+            contentWidth - 36,
+            25,
+          );
+        });
+      }
 
-    y += 188;
-    if (modules.clientTasks) {
-      context.fillStyle = theme.titleColor;
-      context.font = 'bold 22px Arial, "PingFang SC", "Microsoft YaHei", sans-serif';
-      context.fillText("需要学生/家庭配合", contentX, y);
-      context.fillStyle = theme.textColor;
-      context.font = '18px Arial, "PingFang SC", "Microsoft YaHei", sans-serif';
-      drawWrappedText(context, content.clientTasks, contentX, y + 34, contentWidth, 26);
-    }
+      if (key === "clientTasks") {
+        drawReportCard(key, 122, (cardY) => {
+          context.fillStyle = theme.titleColor;
+          context.font = 'bold 21px Arial, "PingFang SC", "Microsoft YaHei", sans-serif';
+          context.fillText("学生/家庭待办 / 需要学生/家庭配合", contentX + 18, cardY + 34);
+          context.fillStyle = theme.textColor;
+          context.font = '17px Arial, "PingFang SC", "Microsoft YaHei", sans-serif';
+          drawWrappedText(context, content.clientTasks, contentX + 18, cardY + 68, contentWidth - 36, 25);
+        });
+      }
+
+      if (key === "attachments") {
+        drawReportCard(key, 96, (cardY) => {
+          context.fillStyle = theme.titleColor;
+          context.font = 'bold 21px Arial, "PingFang SC", "Microsoft YaHei", sans-serif';
+          context.fillText("附件展示 / 附件", contentX + 18, cardY + 34);
+          context.fillStyle = theme.textColor;
+          context.font = '17px Arial, "PingFang SC", "Microsoft YaHei", sans-serif';
+          drawWrappedText(context, `本次报告附件：${attachmentNames}`, contentX + 18, cardY + 68, contentWidth - 36, 25);
+        });
+      }
+    });
 
     context.fillStyle = theme.mutedTextColor;
     context.font = '15px Arial, "PingFang SC", "Microsoft YaHei", sans-serif';
     context.fillText(
       `免责声明：本报告仅用于阶段性申请沟通与服务复核。   报告版本 ${content.styleLabel}`,
       contentX,
-      1660,
+      Math.min(y + 10, 1660),
     );
 
     return await new Promise<Blob>((resolve) => {

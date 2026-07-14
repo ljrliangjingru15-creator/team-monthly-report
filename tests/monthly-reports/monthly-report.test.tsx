@@ -980,7 +980,42 @@ describe("monthly reports page", () => {
     expect(exportedText).not.toContain("下月计划");
   });
 
+  it("exports the same report section order, highlight, and hidden-state as preview", async () => {
+    const exportedBlobs: Blob[] = [];
+    vi.spyOn(URL, "createObjectURL").mockImplementation((blob) => {
+      exportedBlobs.push(blob as Blob);
+      return "blob:monthly-report";
+    });
+    vi.spyOn(URL, "revokeObjectURL").mockImplementation(() => {});
+    vi.spyOn(HTMLAnchorElement.prototype, "click").mockImplementation(() => {});
+
+    render(<MonthlyReportsPage />);
+
+    fireEvent.click(screen.getByLabelText("展示申请时间轴"));
+    fireEvent.click(screen.getByLabelText("展示基础信息"));
+    fireEvent.click(screen.getByLabelText("重点展示关键摘要"));
+    fireEvent.click(screen.getByRole("button", { name: "上移关键摘要" }));
+
+    fireEvent.click(screen.getByRole("button", { name: "导出反馈报告" }));
+
+    await waitFor(() => expect(exportedBlobs).toHaveLength(1));
+    const exportedText = await exportedBlobs[0].text();
+
+    expect(exportedText).toContain(
+      '<section class="section-card highlighted" aria-label="关键摘要">',
+    );
+    expect(exportedText).not.toContain("<h2 class=\"section-title\">申请时间轴</h2>");
+    expect(exportedText).not.toContain("<h2 class=\"section-title\">基础信息</h2>");
+    expect(exportedText.indexOf("关键摘要")).toBeLessThan(
+      exportedText.indexOf("当前阶段重点和下一步建议"),
+    );
+    expect(exportedText.indexOf("当前阶段重点和下一步建议")).toBeLessThan(
+      exportedText.indexOf('<h2 class="section-title">材料收集</h2>'),
+    );
+  });
+
   it("keeps edited content and immediately updates template metadata when application type changes", () => {
+    vi.spyOn(window, "confirm").mockReturnValue(true);
     render(<MonthlyReportsPage />);
 
     fireEvent.change(screen.getByLabelText("本次阶段性进度"), {
@@ -1000,6 +1035,36 @@ describe("monthly reports page", () => {
       "大湾区中外合办升学指导中心",
     );
     expect(screen.getByText("院校与专业方向确认")).toBeInTheDocument();
+  });
+
+  it("asks whether to apply the selected application template or only its theme", () => {
+    const confirm = vi.spyOn(window, "confirm").mockReturnValue(false);
+    render(<MonthlyReportsPage />);
+
+    const canadaConfig = getMonthlyReportApplicationConfig("加拿大本科");
+    fireEvent.change(screen.getByLabelText("申请类型"), {
+      target: { value: "加拿大本科" },
+    });
+
+    expect(confirm).toHaveBeenCalledWith(expect.stringContaining("仅使用该申请类型的主题配色"));
+    expect(screen.getByLabelText("申请类型")).toHaveValue("美国本科新生");
+    expect(screen.getByLabelText("报告模板名称")).toHaveValue("美国本科申请阶段报告");
+    expect(screen.getByLabelText("主色")).toHaveValue(canadaConfig.theme.primaryColor);
+  });
+
+  it("applies the selected application type, template, and timeline after confirmation", () => {
+    vi.spyOn(window, "confirm").mockReturnValue(true);
+    render(<MonthlyReportsPage />);
+
+    fireEvent.change(screen.getByLabelText("申请类型"), {
+      target: { value: "加拿大本科" },
+    });
+
+    expect(screen.getByLabelText("申请类型")).toHaveValue("加拿大本科");
+    expect(screen.getByLabelText("报告模板名称")).toHaveValue(
+      "加拿大申请阶段反馈报告",
+    );
+    expect(screen.getByText("签证方案规划")).toBeInTheDocument();
   });
 
   it("can hide application type from the report preview", () => {
