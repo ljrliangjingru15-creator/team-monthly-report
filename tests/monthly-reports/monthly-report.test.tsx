@@ -143,6 +143,68 @@ describe("monthly reports page", () => {
     expect(preview).toHaveTextContent("报告版本");
   });
 
+  it("uses the editable report title as the largest report heading", () => {
+    render(<MonthlyReportsPage />);
+
+    const preview = screen.getByTestId("monthly-report-preview");
+
+    expect(screen.getByLabelText("本次报告标题")).toHaveValue(
+      "测试学生甲申请季阶段性反馈报告",
+    );
+    expect(
+      within(preview).getByRole("heading", {
+        name: "测试学生甲申请季阶段性反馈报告",
+        level: 3,
+      }),
+    ).toBeInTheDocument();
+
+    fireEvent.change(screen.getByLabelText("本次报告标题"), {
+      target: { value: "王同学美国本科阶段反馈报告" },
+    });
+
+    expect(
+      within(preview).getByRole("heading", {
+        name: "王同学美国本科阶段反馈报告",
+        level: 3,
+      }),
+    ).toBeInTheDocument();
+    expect(preview).not.toHaveTextContent("测试学生甲申请季阶段性反馈报告");
+  });
+
+  it("renders current focus as an independent card before the summary", () => {
+    render(<MonthlyReportsPage />);
+
+    const preview = screen.getByTestId("monthly-report-preview");
+    const orderedSections = within(preview).getAllByTestId("report-section");
+
+    expect(orderedSections[0]).toHaveTextContent("当前阶段重点和下一步建议");
+    expect(orderedSections[1]).toHaveTextContent("关键摘要");
+    expect(within(orderedSections[0]).getByText("当前阶段重点")).toBeInTheDocument();
+    expect(within(orderedSections[0]).getByText("下一步建议")).toBeInTheDocument();
+  });
+
+  it("allows report sections to be hidden, highlighted, and reordered", () => {
+    render(<MonthlyReportsPage />);
+
+    const preview = screen.getByTestId("monthly-report-preview");
+
+    expect(screen.getByLabelText("展示关键摘要")).toBeChecked();
+    fireEvent.click(screen.getByLabelText("展示关键摘要"));
+    expect(preview).not.toHaveTextContent("关键摘要");
+
+    fireEvent.click(screen.getByLabelText("展示关键摘要"));
+    fireEvent.click(screen.getByLabelText("重点展示关键摘要"));
+    expect(screen.getByTestId("report-section-summary")).toHaveAttribute(
+      "data-highlighted",
+      "true",
+    );
+
+    fireEvent.click(screen.getByRole("button", { name: "上移关键摘要" }));
+    const orderedSections = within(preview).getAllByTestId("report-section");
+    expect(orderedSections[0]).toHaveTextContent("关键摘要");
+    expect(orderedSections[1]).toHaveTextContent("当前阶段重点和下一步建议");
+  });
+
   it("shows selectable report template cards for every application type", () => {
     render(<MonthlyReportsPage />);
 
@@ -286,6 +348,20 @@ describe("monthly reports page", () => {
 
     expect(screen.getByTestId("monthly-report-preview")).not.toHaveTextContent(
       "签证材料衔接",
+    );
+  });
+
+  it("shows timeline notes as bubbles above each node", () => {
+    render(<MonthlyReportsPage />);
+
+    fireEvent.change(screen.getByLabelText("时间点备注 1"), {
+      target: { value: "本周已完成材料沟通" },
+    });
+
+    const firstTimelineNode = screen.getByTestId("timeline-node-0");
+    expect(firstTimelineNode).toHaveTextContent("本周已完成材料沟通");
+    expect(within(firstTimelineNode).getByText("本周已完成材料沟通")).toHaveClass(
+      "rounded-full",
     );
   });
 
