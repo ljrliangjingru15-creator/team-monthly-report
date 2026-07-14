@@ -491,6 +491,8 @@ function parseAllRecognizedFields(rawText: string): RecognizedField[] {
     .replace(/\r/g, "\n")
     .replace(/\u2028/g, "\n")
     .replace(/<br\s*\/?>/gi, "\n")
+    .replace(/<\/(th|td)>\s*<t[hd][^>]*>/gi, "：")
+    .replace(/<\/tr>/gi, "\n")
     .replace(/<\/(p|div|li|h[1-6])>/gi, "\n")
     .replace(/<[^>]+>/g, " ")
     .replace(/&nbsp;/g, " ");
@@ -722,6 +724,11 @@ const previousReportHeadings = [
   "下一阶段计划",
   "下月计划",
   "下一阶段重点",
+  "当前阶段重点和下一步建议",
+  "顾问阶段性反馈 / 本次阶段性进度",
+  "本阶段后续动作 / 下一阶段计划",
+  "学生/家庭待办",
+  "学生/家庭待办 / 需要学生/家庭配合",
   "需要学生/家庭配合",
 ];
 
@@ -730,7 +737,9 @@ function normalizeReportText(rawText: string) {
     .replace(/\r/g, "\n")
     .replace(/\u2028/g, "\n")
     .replace(/<br\s*\/?>/gi, "\n")
-    .replace(/<\/(p|div|li|h[1-6])>/gi, "\n")
+    .replace(/<\/t[hd]>\s*<t[hd][^>]*>/gi, "：")
+    .replace(/<\/tr>/gi, "\n")
+    .replace(/<\/(p|div|li|h[1-6]|section|table)>/gi, "\n")
     .replace(/<[^>]+>/g, " ")
     .replace(/&nbsp;/g, " ")
     .replace(/&amp;/g, "&")
@@ -743,21 +752,39 @@ function normalizeReportHeading(line: string) {
   return line.replace(/[：:]\s*$/, "").trim();
 }
 
+function isReportHeadingMatch(line: string, heading: string) {
+  const normalizedLine = normalizeReportHeading(line);
+  const normalizedHeading = normalizeReportHeading(heading);
+  return (
+    normalizedLine === normalizedHeading ||
+    normalizedLine.includes(normalizedHeading) ||
+    normalizedLine
+      .split("/")
+      .map((part) => part.trim())
+      .includes(normalizedHeading)
+  );
+}
+
 function extractReportSection(rawText: string, heading: string) {
   const normalized = normalizeReportText(rawText);
   const lines = normalized
     .split(/\n/)
     .map((line) => line.trim())
     .filter(Boolean);
-  const headingSet = new Set(previousReportHeadings);
-  const startIndex = lines.findIndex(
-    (line) => normalizeReportHeading(line) === heading,
+  const startIndex = lines.findIndex((line) =>
+    isReportHeadingMatch(line, heading),
   );
 
   if (startIndex >= 0) {
     const bodyLines: string[] = [];
     for (let index = startIndex + 1; index < lines.length; index += 1) {
-      if (headingSet.has(normalizeReportHeading(lines[index]))) break;
+      if (
+        previousReportHeadings.some((knownHeading) =>
+          isReportHeadingMatch(lines[index], knownHeading),
+        )
+      ) {
+        break;
+      }
       bodyLines.push(lines[index]);
     }
     return bodyLines.join("\n").trim();
@@ -1025,6 +1052,8 @@ export function MonthlyReportWorkspace() {
     PNG: false,
   });
   const [exportStatus, setExportStatus] = useState("");
+  const [pendingApplicationType, setPendingApplicationType] =
+    useState<MonthlyReportApplicationType | null>(null);
   const [, setIsDirty] = useState(false);
 
   const config = useMemo(
@@ -1072,35 +1101,19 @@ export function MonthlyReportWorkspace() {
   function handleApplicationTypeChange(value: string) {
     const nextApplicationType = value as MonthlyReportApplicationType;
     if (nextApplicationType === applicationType) return;
+    setPendingApplicationType(nextApplicationType);
+  }
 
-    let shouldUseTemplate = true;
-    if (typeof window !== "undefined" && typeof window.confirm === "function") {
-      try {
-        const isJsdom =
-          typeof navigator !== "undefined" &&
-          navigator.userAgent.toLowerCase().includes("jsdom");
-        const isMockedConfirm =
-          "mock" in window.confirm || "_isMockFunction" in window.confirm;
+  function usePendingApplicationTemplate() {
+    if (!pendingApplicationType) return;
+    applyApplicationType(pendingApplicationType, false);
+    setPendingApplicationType(null);
+  }
 
-        if (!isJsdom || isMockedConfirm) {
-          const confirmResult = window.confirm(
-            "是否直接使用该申请类型与报告模板？\n\n选择“确定”：切换申请类型、报告模板、部门标签、主题配色和申请时间轴。\n选择“取消”：仅使用该申请类型的主题配色。",
-          );
-          if (typeof confirmResult === "boolean") {
-            shouldUseTemplate = confirmResult;
-          }
-        }
-      } catch {
-        shouldUseTemplate = true;
-      }
-    }
-
-    if (shouldUseTemplate) {
-      applyApplicationType(nextApplicationType, false);
-      return;
-    }
-
-    setTheme(getMonthlyReportApplicationConfig(nextApplicationType).theme);
+  function usePendingApplicationThemeOnly() {
+    if (!pendingApplicationType) return;
+    setTheme(getMonthlyReportApplicationConfig(pendingApplicationType).theme);
+    setPendingApplicationType(null);
     setIsDirty(true);
   }
 
@@ -1385,7 +1398,7 @@ export function MonthlyReportWorkspace() {
 
     let rawText = "";
     const ocrText = await recognizeImageText(file);
-    if (shouldReadUploadedFileAsText(file)) {
+    if (shouldReadUploadedFileAsText(file) || file.type === "application/pdf") {
       try {
         rawText = [ocrText, await file.text()].filter(Boolean).join("\n");
       } catch {
@@ -1420,8 +1433,12 @@ export function MonthlyReportWorkspace() {
       nextMonthPlan:
         extractReportSection(rawText, "下一阶段计划") ||
         extractReportSection(rawText, "下月计划"),
-      nextStageFocus: extractReportSection(rawText, "下一阶段重点"),
-      clientTasks: extractReportSection(rawText, "需要学生/家庭配合"),
+      nextStageFocus:
+        extractReportSection(rawText, "下一阶段重点") ||
+        extractReportSection(rawText, "当前阶段重点和下一步建议"),
+      clientTasks:
+        extractReportSection(rawText, "学生/家庭待办") ||
+        extractReportSection(rawText, "需要学生/家庭配合"),
     };
     const fieldsFromReport = parseAllRecognizedFields(
       [
@@ -1667,7 +1684,6 @@ th,td{border-bottom:1px solid #e2e8f0;padding:8px 6px;text-align:left;vertical-a
 th{width:36%;color:${theme.mutedTextColor};font-weight:600}
 .status-pill{display:inline-flex;border-radius:999px;padding:4px 8px;background:#f1f5f9;color:#64748b;font-size:10px;font-weight:700;white-space:nowrap}
 .section-card ul{margin:0;padding-left:18px;font-size:12px;line-height:1.8}
-.footer{display:flex;justify-content:space-between;gap:16px;margin-top:16px;border-top:1px solid #e2e8f0;padding-top:10px;color:${theme.mutedTextColor};font-size:10px}
 </style>
 </head>
 <body>
@@ -1690,7 +1706,6 @@ ${modules.applicationType ? `<span>申请类型：${escapeHtml(applicationType)}
 </div>
 </section>
 ${renderedReportModules}
-<footer class="footer"><span>免责声明：本报告仅用于阶段性申请沟通与服务复核。</span><span>报告版本 ${escapeHtml(content.styleLabel)}</span></footer>
 </main>
 </body>
 </html>`;
@@ -1704,9 +1719,57 @@ ${renderedReportModules}
       return new Blob([buildReportHtml()], { type: "text/html;charset=utf-8" });
     }
 
+    const canvasWidth = 1240;
+    const heroY = 198;
+    const heroHeight = 238;
+    const cardGap = 24;
+    const initialContentY = heroY + heroHeight + 42;
+    const estimateWrappedLines = (text: string, charactersPerLine: number) =>
+      splitReportLines(text).reduce(
+        (total, line) => total + Math.max(1, Math.ceil(line.length / charactersPerLine)),
+        0,
+      ) || 1;
+    const estimateCardHeight = (key: ReportModuleKey) => {
+      if (!modules[key]) return 0;
+      if (key === "attachments" && !attachmentNames) return 0;
+      if (key === "stageFocus") {
+        return Math.max(150, 90 + estimateWrappedLines(content.nextStageFocus, 38) * 23);
+      }
+      if (key === "summary") return 150;
+      if (key === "timeline") {
+        return 62 + Math.max(1, Math.ceil(timelineItems.length / 5)) * 88;
+      }
+      if (key === "basicInfo") {
+        const rows = studentInfoRows.length || 1;
+        return 62 + rows * 30;
+      }
+      if (key === "materialCollection") {
+        const rows = materialRows.length || 1;
+        return 92 + rows * 28;
+      }
+      if (key === "completedThisMonth") {
+        return Math.max(136, 72 + estimateWrappedLines(advisorFeedback, 62) * 25);
+      }
+      if (key === "nextMonthPlan") {
+        return Math.max(
+          136,
+          72 + estimateWrappedLines(nextActionItems.map((item) => `• ${item}`).join("\n"), 62) * 25,
+        );
+      }
+      if (key === "clientTasks") {
+        return Math.max(122, 72 + estimateWrappedLines(content.clientTasks, 62) * 25);
+      }
+      return Math.max(96, 72 + estimateWrappedLines(attachmentNames, 62) * 25);
+    };
+    const estimatedContentEnd =
+      initialContentY +
+      reportModuleOrder.reduce((total, key) => {
+        const height = estimateCardHeight(key);
+        return total + (height > 0 ? height + cardGap : 0);
+      }, 0);
     const canvas = document.createElement("canvas");
-    canvas.width = 1240;
-    canvas.height = 1754;
+    canvas.width = canvasWidth;
+    canvas.height = Math.max(1754, Math.ceil(estimatedContentEnd + 90));
     const context = canvas.getContext("2d");
     if (!context) {
       return new Blob([buildReportHtml()], { type: "text/html;charset=utf-8" });
@@ -1746,8 +1809,6 @@ ${renderedReportModules}
     context.fillText(content.season, 1130, 158);
     context.textAlign = "left";
 
-    const heroY = 198;
-    const heroHeight = 238;
     const heroGradient = context.createLinearGradient(
       contentX,
       heroY,
@@ -1777,7 +1838,7 @@ ${renderedReportModules}
       .join("   ");
     context.fillText(metaText, contentX + 32, heroY + 148);
 
-    let y = heroY + heroHeight + 42;
+    let y = initialContentY;
     function roundedRect(x: number, rectY: number, width: number, height: number, radius: number) {
       canvasContext.beginPath();
       canvasContext.moveTo(x + radius, rectY);
@@ -1830,7 +1891,7 @@ ${renderedReportModules}
 
     reportModuleOrder.forEach((key) => {
       if (key === "stageFocus") {
-        drawReportCard(key, 150, (cardY) => {
+        drawReportCard(key, estimateCardHeight(key), (cardY) => {
           context.fillStyle = theme.titleColor;
           context.font = 'bold 24px Arial, "PingFang SC", "Microsoft YaHei", sans-serif';
           context.fillText("当前阶段重点和下一步建议", contentX + 18, cardY + 36);
@@ -1859,7 +1920,7 @@ ${renderedReportModules}
       }
 
       if (key === "summary") {
-        drawReportCard(key, 150, (cardY) => {
+        drawReportCard(key, estimateCardHeight(key), (cardY) => {
           context.fillStyle = theme.titleColor;
           context.font = 'bold 24px Arial, "PingFang SC", "Microsoft YaHei", sans-serif';
           context.fillText("关键摘要", contentX + 18, cardY + 36);
@@ -1948,12 +2009,12 @@ ${renderedReportModules}
           studentInfoRows.length > 0
             ? studentInfoRows
             : [{ label: "基础信息", value: emptySectionPlaceholder }];
-        drawReportCard(key, 62 + Math.min(rows.length, 10) * 30, (cardY) => {
+        drawReportCard(key, estimateCardHeight(key), (cardY) => {
           context.fillStyle = theme.titleColor;
           context.font = 'bold 23px Arial, "PingFang SC", "Microsoft YaHei", sans-serif';
           context.fillText("基础信息", contentX + 18, cardY + 36);
           context.font = '17px Arial, "PingFang SC", "Microsoft YaHei", sans-serif';
-          rows.slice(0, 10).forEach((row, index) => {
+          rows.forEach((row, index) => {
             const rowY = cardY + 76 + index * 30;
             context.fillStyle = theme.mutedTextColor;
             context.fillText(row.label, contentX + 18, rowY);
@@ -1975,7 +2036,7 @@ ${renderedReportModules}
                   remark: emptySectionPlaceholder,
                 },
               ];
-        drawReportCard(key, 92 + Math.min(rows.length, 10) * 28, (cardY) => {
+        drawReportCard(key, estimateCardHeight(key), (cardY) => {
           context.fillStyle = theme.titleColor;
           context.font = 'bold 23px Arial, "PingFang SC", "Microsoft YaHei", sans-serif';
           context.fillText("材料收集", contentX + 18, cardY + 36);
@@ -1984,7 +2045,7 @@ ${renderedReportModules}
           context.fillText("材料项目", contentX + 18, cardY + 70);
           context.fillText("状态", contentX + 360, cardY + 70);
           context.fillText("备注", contentX + 520, cardY + 70);
-          rows.slice(0, 10).forEach((row, index) => {
+          rows.forEach((row, index) => {
             const rowY = cardY + 102 + index * 28;
             context.fillStyle = theme.textColor;
             context.font = '16px Arial, "PingFang SC", "Microsoft YaHei", sans-serif';
@@ -2000,7 +2061,7 @@ ${renderedReportModules}
       }
 
       if (key === "completedThisMonth") {
-        drawReportCard(key, 136, (cardY) => {
+        drawReportCard(key, estimateCardHeight(key), (cardY) => {
           context.fillStyle = theme.titleColor;
           context.font = 'bold 21px Arial, "PingFang SC", "Microsoft YaHei", sans-serif';
           context.fillText("顾问阶段性反馈 / 本次阶段性进度", contentX + 18, cardY + 34);
@@ -2011,7 +2072,7 @@ ${renderedReportModules}
       }
 
       if (key === "nextMonthPlan") {
-        drawReportCard(key, 136, (cardY) => {
+        drawReportCard(key, estimateCardHeight(key), (cardY) => {
           context.fillStyle = theme.titleColor;
           context.font = 'bold 21px Arial, "PingFang SC", "Microsoft YaHei", sans-serif';
           context.fillText("本阶段后续动作 / 下一阶段计划", contentX + 18, cardY + 34);
@@ -2029,7 +2090,7 @@ ${renderedReportModules}
       }
 
       if (key === "clientTasks") {
-        drawReportCard(key, 122, (cardY) => {
+        drawReportCard(key, estimateCardHeight(key), (cardY) => {
           context.fillStyle = theme.titleColor;
           context.font = 'bold 21px Arial, "PingFang SC", "Microsoft YaHei", sans-serif';
           context.fillText("学生/家庭待办 / 需要学生/家庭配合", contentX + 18, cardY + 34);
@@ -2040,7 +2101,7 @@ ${renderedReportModules}
       }
 
       if (key === "attachments") {
-        drawReportCard(key, 96, (cardY) => {
+        drawReportCard(key, estimateCardHeight(key), (cardY) => {
           context.fillStyle = theme.titleColor;
           context.font = 'bold 21px Arial, "PingFang SC", "Microsoft YaHei", sans-serif';
           context.fillText("附件展示 / 附件", contentX + 18, cardY + 34);
@@ -2050,14 +2111,6 @@ ${renderedReportModules}
         });
       }
     });
-
-    context.fillStyle = theme.mutedTextColor;
-    context.font = '15px Arial, "PingFang SC", "Microsoft YaHei", sans-serif';
-    context.fillText(
-      `免责声明：本报告仅用于阶段性申请沟通与服务复核。   报告版本 ${content.styleLabel}`,
-      contentX,
-      Math.min(y + 10, 1660),
-    );
 
     return await new Promise<Blob>((resolve) => {
       canvas.toBlob(
@@ -2081,16 +2134,22 @@ ${renderedReportModules}
     const pdf = await PDFDocument.create();
     const pngBytes = new Uint8Array(await pngBlob.arrayBuffer());
     const image = await pdf.embedPng(pngBytes);
-    const page = pdf.addPage([595.28, 841.89]);
-    const scale = Math.min(595.28 / image.width, 841.89 / image.height);
+    const pageWidth = 595.28;
+    const pageHeight = 841.89;
+    const scale = pageWidth / image.width;
     const width = image.width * scale;
     const height = image.height * scale;
-    page.drawImage(image, {
-      x: (595.28 - width) / 2,
-      y: (841.89 - height) / 2,
-      width,
-      height,
-    });
+    const pageCount = Math.max(1, Math.ceil(height / pageHeight));
+
+    for (let pageIndex = 0; pageIndex < pageCount; pageIndex += 1) {
+      const page = pdf.addPage([pageWidth, pageHeight]);
+      page.drawImage(image, {
+        x: 0,
+        y: pageHeight - height + pageIndex * pageHeight,
+        width,
+        height,
+      });
+    }
     const pdfBytes = await pdf.save();
     const pdfBuffer = new ArrayBuffer(pdfBytes.byteLength);
     new Uint8Array(pdfBuffer).set(pdfBytes);
@@ -2400,6 +2459,40 @@ ${renderedReportModules}
         color: theme.textColor,
       }}
     >
+      {pendingApplicationType ? (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/35 px-4">
+          <section
+            aria-modal="true"
+            className="w-full max-w-md rounded-2xl border border-slate-200 bg-white p-5 shadow-xl"
+            role="dialog"
+          >
+            <h2 className="text-lg font-semibold text-slate-950">
+              切换为{pendingApplicationType}
+            </h2>
+            <p className="mt-2 text-sm leading-6 text-slate-600">
+              请选择本次切换方式。第一种会同步申请类型、报告模板、时间轴和主题配色；第二种只借用该类型的视觉配色，当前申请类型和报告模板保持不变。
+            </p>
+            <div className="mt-4 grid gap-2">
+              <button
+                className="rounded-xl px-4 py-3 text-left text-sm font-semibold text-white"
+                style={{ backgroundColor: theme.primaryColor }}
+                type="button"
+                onClick={usePendingApplicationTemplate}
+              >
+                使用申请类型 + 报告模板 + 时间轴 + 配色
+              </button>
+              <button
+                className="rounded-xl border border-slate-300 bg-white px-4 py-3 text-left text-sm font-semibold text-slate-700"
+                type="button"
+                onClick={usePendingApplicationThemeOnly}
+              >
+                仅使用该类型主题配色
+              </button>
+            </div>
+          </section>
+        </div>
+      ) : null}
+
       <div className="mb-5 flex flex-wrap items-end justify-between gap-4">
         <div>
           <p className="text-sm" style={{ color: theme.mutedTextColor }}>
@@ -3085,10 +3178,6 @@ ${renderedReportModules}
 
             {reportModuleOrder.map((key) => renderPreviewModule(key))}
 
-            <footer className="flex items-center justify-between gap-3 border-t border-slate-200 px-4 py-3 text-[11px] text-slate-500">
-              <span>免责声明：本报告仅用于阶段性申请沟通与服务复核。</span>
-              <span>报告版本 {content.styleLabel}</span>
-            </footer>
           </article>
 
           <section className="mt-5 rounded-lg border border-slate-200 bg-slate-50 p-3">

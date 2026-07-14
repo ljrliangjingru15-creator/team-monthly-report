@@ -140,7 +140,8 @@ describe("monthly reports page", () => {
     expect(preview).toHaveTextContent("备注");
     expect(preview).toHaveTextContent("本阶段后续动作");
     expect(preview).toHaveTextContent("顾问阶段性反馈");
-    expect(preview).toHaveTextContent("报告版本");
+    expect(preview).not.toHaveTextContent("报告版本");
+    expect(preview).not.toHaveTextContent("免责声明");
   });
 
   it("uses the editable report title as the largest report heading", () => {
@@ -242,6 +243,11 @@ describe("monthly reports page", () => {
         name: "选择综合评价申请模板",
       }),
     );
+    fireEvent.click(
+      screen.getByRole("button", {
+        name: "使用申请类型 + 报告模板 + 时间轴 + 配色",
+      }),
+    );
 
     expect(screen.getByLabelText("申请类型")).toHaveValue("综合评价申请");
     expect(screen.getByTestId("monthly-report-preview")).toHaveStyle({
@@ -306,6 +312,11 @@ describe("monthly reports page", () => {
     fireEvent.click(
       screen.getByRole("button", {
         name: "选择加拿大本科模板",
+      }),
+    );
+    fireEvent.click(
+      screen.getByRole("button", {
+        name: "使用申请类型 + 报告模板 + 时间轴 + 配色",
       }),
     );
 
@@ -423,6 +434,11 @@ describe("monthly reports page", () => {
     fireEvent.change(screen.getByLabelText("申请类型"), {
       target: { value: "加拿大本科" },
     });
+    fireEvent.click(
+      screen.getByRole("button", {
+        name: "使用申请类型 + 报告模板 + 时间轴 + 配色",
+      }),
+    );
 
     expect(screen.getByText("申请系统准备")).toBeInTheDocument();
     expect(screen.getByTestId("monthly-report-preview")).toHaveStyle({
@@ -794,6 +810,43 @@ describe("monthly reports page", () => {
     );
   });
 
+  it("fills editable report content from an uploaded exported html report", async () => {
+    render(<MonthlyReportsPage />);
+
+    fireEvent.change(screen.getByLabelText("上传此前报告"), {
+      target: {
+        files: [
+          new File(
+            [
+              [
+                "<section><h2>基础信息</h2><table><tr><th>目前GPA</th><td>3.92</td></tr></table></section>",
+                "<section><h2>材料收集</h2><table><tr><td>护照</td><td>已完成</td><td>已收集</td></tr></table></section>",
+                "<section><h2>顾问阶段性反馈 / 本次阶段性进度</h2><p>已完成上一版导出报告回填。</p></section>",
+                "<section><h2>本阶段后续动作 / 下一阶段计划</h2><ul><li>继续确认申请系统。</li></ul></section>",
+                "<section><h2>学生/家庭待办 / 需要学生/家庭配合</h2><p>请补充银行卡信息。</p></section>",
+              ].join(""),
+            ],
+            "此前导出报告.html",
+            { type: "text/html" },
+          ),
+        ],
+      },
+    });
+
+    await waitFor(() =>
+      expect(screen.getByLabelText("本次阶段性进度")).toHaveValue(
+        "已完成上一版导出报告回填。",
+      ),
+    );
+
+    expect(screen.getByLabelText("基础信息")).toHaveValue("目前GPA：3.92");
+    expect(screen.getByLabelText("材料收集")).toHaveValue("护照：已完成：已收集");
+    expect(screen.getByLabelText("下一阶段计划")).toHaveValue("继续确认申请系统。");
+    expect(screen.getByLabelText("需要学生/家庭配合")).toHaveValue(
+      "请补充银行卡信息。",
+    );
+  });
+
   it("shows a visible recognition status when uploaded screenshot text cannot be parsed", async () => {
     render(<MonthlyReportsPage />);
 
@@ -978,6 +1031,8 @@ describe("monthly reports page", () => {
     expect(exportedText).not.toContain("上传识别");
     expect(exportedText).not.toContain("本月完成情况");
     expect(exportedText).not.toContain("下月计划");
+    expect(exportedText).not.toContain("免责声明");
+    expect(exportedText).not.toContain("报告版本");
   });
 
   it("exports the same report section order, highlight, and hidden-state as preview", async () => {
@@ -1014,8 +1069,7 @@ describe("monthly reports page", () => {
     );
   });
 
-  it("keeps edited content and immediately updates template metadata when application type changes", () => {
-    vi.spyOn(window, "confirm").mockReturnValue(true);
+  it("keeps edited content and updates template metadata after choosing the full switch option", () => {
     render(<MonthlyReportsPage />);
 
     fireEvent.change(screen.getByLabelText("本次阶段性进度"), {
@@ -1024,6 +1078,11 @@ describe("monthly reports page", () => {
     fireEvent.change(screen.getByLabelText("申请类型"), {
       target: { value: "中外合办申请" },
     });
+    fireEvent.click(
+      screen.getByRole("button", {
+        name: "使用申请类型 + 报告模板 + 时间轴 + 配色",
+      }),
+    );
 
     expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
     expect(screen.getByLabelText("本次阶段性进度")).toHaveValue("已经填写的本月进展");
@@ -1037,8 +1096,7 @@ describe("monthly reports page", () => {
     expect(screen.getByText("院校与专业方向确认")).toBeInTheDocument();
   });
 
-  it("asks whether to apply the selected application template or only its theme", () => {
-    const confirm = vi.spyOn(window, "confirm").mockReturnValue(false);
+  it("offers explicit application switch choices and can apply only the selected theme", () => {
     render(<MonthlyReportsPage />);
 
     const canadaConfig = getMonthlyReportApplicationConfig("加拿大本科");
@@ -1046,19 +1104,34 @@ describe("monthly reports page", () => {
       target: { value: "加拿大本科" },
     });
 
-    expect(confirm).toHaveBeenCalledWith(expect.stringContaining("仅使用该申请类型的主题配色"));
+    expect(screen.getByRole("dialog")).toHaveTextContent("切换为加拿大本科");
+    expect(
+      screen.getByRole("button", {
+        name: "使用申请类型 + 报告模板 + 时间轴 + 配色",
+      }),
+    ).toBeInTheDocument();
+    fireEvent.click(
+      screen.getByRole("button", {
+        name: "仅使用该类型主题配色",
+      }),
+    );
+
     expect(screen.getByLabelText("申请类型")).toHaveValue("美国本科新生");
     expect(screen.getByLabelText("报告模板名称")).toHaveValue("美国本科申请阶段报告");
     expect(screen.getByLabelText("主色")).toHaveValue(canadaConfig.theme.primaryColor);
   });
 
-  it("applies the selected application type, template, and timeline after confirmation", () => {
-    vi.spyOn(window, "confirm").mockReturnValue(true);
+  it("applies the selected application type, template, and timeline after choosing the full option", () => {
     render(<MonthlyReportsPage />);
 
     fireEvent.change(screen.getByLabelText("申请类型"), {
       target: { value: "加拿大本科" },
     });
+    fireEvent.click(
+      screen.getByRole("button", {
+        name: "使用申请类型 + 报告模板 + 时间轴 + 配色",
+      }),
+    );
 
     expect(screen.getByLabelText("申请类型")).toHaveValue("加拿大本科");
     expect(screen.getByLabelText("报告模板名称")).toHaveValue(
