@@ -19,7 +19,7 @@ import {
   Upload,
   Wand2,
 } from "lucide-react";
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import {
   APPLICATION_TYPE_OPTIONS,
   getMonthlyReportApplicationConfig,
@@ -94,6 +94,24 @@ type TextFormatting = {
 };
 
 type TextFormattingMap = Record<TextFormattingKey, TextFormatting>;
+
+type TextFormattingRange = {
+  start: number;
+  end: number;
+  formatting: TextFormatting;
+};
+
+type TextFormattingRangeMap = Record<TextFormattingKey, TextFormattingRange[]>;
+
+type TextSelection = {
+  start: number;
+  end: number;
+};
+
+type StyledTextSegment = {
+  text: string;
+  formatting: TextFormatting;
+};
 
 type ReportModuleKey =
   | "stageFocus"
@@ -361,16 +379,210 @@ function buildDefaultTextFormatting(color: string): TextFormattingMap {
   };
 }
 
+function buildDefaultTextFormattingRanges(): TextFormattingRangeMap {
+  return {
+    completedThisMonth: [],
+    nextMonthPlan: [],
+    clientTasks: [],
+    studentBasicInfo: [],
+    materialCollectionStatus: [],
+  };
+}
+
+function textFormattingMatches(left: TextFormatting, right: TextFormatting) {
+  return (
+    left.color === right.color &&
+    left.bold === right.bold &&
+    left.underline === right.underline
+  );
+}
+
+function buildCharacterFormatting(
+  textLength: number,
+  baseFormatting: TextFormatting,
+  ranges: TextFormattingRange[],
+) {
+  const formatting = Array.from({ length: textLength }, () => baseFormatting);
+
+  ranges.forEach((range) => {
+    const start = Math.max(0, Math.min(textLength, range.start));
+    const end = Math.max(start, Math.min(textLength, range.end));
+    for (let index = start; index < end; index += 1) {
+      formatting[index] = range.formatting;
+    }
+  });
+
+  return formatting;
+}
+
+function compressCharacterFormatting(
+  formatting: TextFormatting[],
+  baseFormatting: TextFormatting,
+) {
+  const ranges: TextFormattingRange[] = [];
+  let rangeStart = -1;
+  let rangeFormatting: TextFormatting | null = null;
+
+  const flushRange = (end: number) => {
+    if (rangeStart < 0 || !rangeFormatting) return;
+    ranges.push({ start: rangeStart, end, formatting: rangeFormatting });
+    rangeStart = -1;
+    rangeFormatting = null;
+  };
+
+  formatting.forEach((item, index) => {
+    if (textFormattingMatches(item, baseFormatting)) {
+      flushRange(index);
+      return;
+    }
+    if (rangeStart >= 0 && rangeFormatting && textFormattingMatches(item, rangeFormatting)) {
+      return;
+    }
+    flushRange(index);
+    rangeStart = index;
+    rangeFormatting = item;
+  });
+  flushRange(formatting.length);
+
+  return ranges;
+}
+
+function getSelectionFormatting(
+  text: string,
+  baseFormatting: TextFormatting,
+  ranges: TextFormattingRange[],
+  selection: TextSelection,
+) {
+  if (!text.length) return baseFormatting;
+  const characterFormatting = buildCharacterFormatting(
+    text.length,
+    baseFormatting,
+    ranges,
+  );
+  const start = Math.max(0, Math.min(text.length - 1, selection.start));
+  const end = Math.max(start + 1, Math.min(text.length, selection.end || start + 1));
+  const selectedFormatting = characterFormatting.slice(start, end);
+  const first = selectedFormatting[0] ?? baseFormatting;
+
+  return {
+    color: selectedFormatting.every((item) => item.color === first.color)
+      ? first.color
+      : baseFormatting.color,
+    bold: selectedFormatting.every((item) => item.bold),
+    underline: selectedFormatting.every((item) => item.underline),
+  };
+}
+
+function applyTextFormattingPatch(
+  text: string,
+  baseFormatting: TextFormatting,
+  ranges: TextFormattingRange[],
+  selection: TextSelection,
+  patch: Partial<TextFormatting>,
+) {
+  const formatting = buildCharacterFormatting(text.length, baseFormatting, ranges);
+  const hasSelection = selection.end > selection.start;
+  const start = hasSelection ? Math.max(0, Math.min(text.length, selection.start)) : 0;
+  const end = hasSelection ? Math.max(start, Math.min(text.length, selection.end)) : text.length;
+  const nextBaseFormatting = hasSelection
+    ? baseFormatting
+    : { ...baseFormatting, ...patch };
+
+  for (let index = start; index < end; index += 1) {
+    formatting[index] = { ...formatting[index], ...patch };
+  }
+
+  return {
+    formatting: nextBaseFormatting,
+    ranges: compressCharacterFormatting(formatting, nextBaseFormatting),
+  };
+}
+
+function remapTextFormattingRanges(
+  previousText: string,
+  nextText: string,
+  baseFormatting: TextFormatting,
+  ranges: TextFormattingRange[],
+) {
+  if (previousText === nextText) return ranges;
+  const previousFormatting = buildCharacterFormatting(
+    previousText.length,
+    baseFormatting,
+    ranges,
+  );
+  let prefixLength = 0;
+  while (
+    prefixLength < previousText.length &&
+    prefixLength < nextText.length &&
+    previousText[prefixLength] === nextText[prefixLength]
+  ) {
+    prefixLength += 1;
+  }
+  let suffixLength = 0;
+  while (
+    suffixLength < previousText.length - prefixLength &&
+    suffixLength < nextText.length - prefixLength &&
+    previousText[previousText.length - suffixLength - 1] ===
+      nextText[nextText.length - suffixLength - 1]
+  ) {
+    suffixLength += 1;
+  }
+
+  const insertedLength = nextText.length - prefixLength - suffixLength;
+  const inheritedFormatting =
+    previousFormatting[prefixLength] ??
+    previousFormatting[prefixLength - 1] ??
+    baseFormatting;
+  const nextFormatting = [
+    ...previousFormatting.slice(0, prefixLength),
+    ...Array.from({ length: insertedLength }, () => inheritedFormatting),
+    ...previousFormatting.slice(previousText.length - suffixLength),
+  ];
+
+  return compressCharacterFormatting(nextFormatting, baseFormatting);
+}
+
+function buildStyledTextSegments(
+  text: string,
+  baseFormatting: TextFormatting,
+  ranges: TextFormattingRange[],
+  start = 0,
+  end = text.length,
+): StyledTextSegment[] {
+  const safeStart = Math.max(0, Math.min(text.length, start));
+  const safeEnd = Math.max(safeStart, Math.min(text.length, end));
+  const formatting = buildCharacterFormatting(text.length, baseFormatting, ranges);
+  const segments: StyledTextSegment[] = [];
+  let segmentStart = safeStart;
+
+  for (let index = safeStart + 1; index <= safeEnd; index += 1) {
+    const previous = formatting[index - 1] ?? baseFormatting;
+    const current = formatting[index] ?? baseFormatting;
+    if (index < safeEnd && textFormattingMatches(previous, current)) continue;
+    segments.push({
+      text: text.slice(segmentStart, index),
+      formatting: previous,
+    });
+    segmentStart = index;
+  }
+
+  return segments.filter((segment) => segment.text.length > 0);
+}
+
 type ReportTextEditorProps = {
   id: string;
   label: string;
   value: string;
   formatting: TextFormatting;
+  formattingRanges: TextFormattingRange[];
   className?: string;
   minHeightClass?: string;
   placeholder?: string;
   onValueChange: (value: string) => void;
-  onFormattingChange: (formatting: TextFormatting) => void;
+  onFormattingChange: (
+    patch: Partial<TextFormatting>,
+    selection: TextSelection,
+  ) => void;
 };
 
 function ReportTextEditor({
@@ -378,12 +590,32 @@ function ReportTextEditor({
   label,
   value,
   formatting,
+  formattingRanges,
   className = "",
   minHeightClass = "min-h-28",
   placeholder,
   onValueChange,
   onFormattingChange,
 }: ReportTextEditorProps) {
+  const textareaRef = useRef<HTMLTextAreaElement>(null);
+  const [selection, setSelection] = useState<TextSelection>({ start: 0, end: 0 });
+  const selectedFormatting = getSelectionFormatting(
+    value,
+    formatting,
+    formattingRanges,
+    selection,
+  );
+  const selectedCharacterCount = Math.max(0, selection.end - selection.start);
+
+  const rememberSelection = () => {
+    const textarea = textareaRef.current;
+    if (!textarea) return;
+    setSelection({
+      start: textarea.selectionStart,
+      end: textarea.selectionEnd,
+    });
+  };
+
   return (
     <section className={`grid gap-2 ${className}`}>
       <div className="flex flex-wrap items-center justify-between gap-2">
@@ -391,6 +623,11 @@ function ReportTextEditor({
           {label}
         </label>
         <div className="flex items-center gap-1 rounded-lg border border-slate-200 bg-slate-50 p-1">
+          {selectedCharacterCount > 0 ? (
+            <span className="px-1 text-xs text-slate-500">
+              已选 {selectedCharacterCount} 字
+            </span>
+          ) : null}
           <label
             className="inline-flex h-8 w-8 cursor-pointer items-center justify-center rounded-md bg-white shadow-sm"
             title={`${label}文字颜色`}
@@ -400,35 +637,34 @@ function ReportTextEditor({
               aria-label={`${label}文字颜色`}
               className="absolute h-px w-px opacity-0"
               type="color"
-              value={formatting.color}
+              value={selectedFormatting.color}
               onChange={(event) =>
-                onFormattingChange({ ...formatting, color: event.target.value })
+                onFormattingChange({ color: event.target.value }, selection)
               }
             />
           </label>
           <button
             aria-label={`${label}加粗`}
-            aria-pressed={formatting.bold}
+            aria-pressed={selectedFormatting.bold}
             className="inline-flex h-8 w-8 items-center justify-center rounded-md bg-white shadow-sm aria-pressed:bg-slate-900 aria-pressed:text-white"
             title="加粗"
             type="button"
             onClick={() =>
-              onFormattingChange({ ...formatting, bold: !formatting.bold })
+              onFormattingChange({ bold: !selectedFormatting.bold }, selection)
             }
           >
             <BoldIcon className="h-4 w-4" aria-hidden />
           </button>
           <button
             aria-label={`${label}下划线`}
-            aria-pressed={formatting.underline}
+            aria-pressed={selectedFormatting.underline}
             className="inline-flex h-8 w-8 items-center justify-center rounded-md bg-white shadow-sm aria-pressed:bg-slate-900 aria-pressed:text-white"
             title="下划线"
             type="button"
             onClick={() =>
               onFormattingChange({
-                ...formatting,
-                underline: !formatting.underline,
-              })
+                underline: !selectedFormatting.underline,
+              }, selection)
             }
           >
             <UnderlineIcon className="h-4 w-4" aria-hidden />
@@ -439,6 +675,7 @@ function ReportTextEditor({
         aria-label={label}
         className={`${minHeightClass} rounded-lg border border-slate-300 px-3 py-2 text-sm leading-6`}
         id={id}
+        ref={textareaRef}
         placeholder={placeholder}
         style={{
           color: formatting.color,
@@ -447,6 +684,9 @@ function ReportTextEditor({
         }}
         value={value}
         onChange={(event) => onValueChange(event.target.value)}
+        onKeyUp={rememberSelection}
+        onMouseUp={rememberSelection}
+        onSelect={rememberSelection}
       />
     </section>
   );
@@ -1051,6 +1291,94 @@ function drawWrappedText(
   return currentY;
 }
 
+function setCanvasTextFormatting(
+  context: CanvasRenderingContext2D,
+  formatting: TextFormatting,
+  fontSize: number,
+) {
+  context.fillStyle = formatting.color;
+  context.font = `${formatting.bold ? "bold " : ""}${fontSize}px Arial, "PingFang SC", "Microsoft YaHei", sans-serif`;
+}
+
+function drawWrappedStyledText(
+  context: CanvasRenderingContext2D,
+  segments: StyledTextSegment[],
+  x: number,
+  y: number,
+  maxWidth: number,
+  lineHeight: number,
+  fontSize: number,
+) {
+  let currentX = x;
+  let currentY = y;
+  let hasContentOnLine = false;
+
+  segments.forEach((segment) => {
+    setCanvasTextFormatting(context, segment.formatting, fontSize);
+    for (let index = 0; index < segment.text.length; index += 1) {
+      const character = segment.text[index];
+      if (character === "\r") continue;
+      if (character === "\n") {
+        currentX = x;
+        currentY += lineHeight;
+        hasContentOnLine = false;
+        continue;
+      }
+      const characterWidth = context.measureText(character).width;
+      if (hasContentOnLine && currentX + characterWidth > x + maxWidth) {
+        currentX = x;
+        currentY += lineHeight;
+        hasContentOnLine = false;
+      }
+      context.fillText(character, currentX, currentY);
+      if (segment.formatting.underline) {
+        context.beginPath();
+        context.moveTo(currentX, currentY + 3);
+        context.lineTo(currentX + characterWidth, currentY + 3);
+        context.strokeStyle = segment.formatting.color;
+        context.lineWidth = 1;
+        context.stroke();
+      }
+      currentX += characterWidth;
+      hasContentOnLine = true;
+    }
+  });
+
+  return currentY + lineHeight;
+}
+
+function measureWrappedStyledTextLines(
+  context: CanvasRenderingContext2D,
+  segments: StyledTextSegment[],
+  maxWidth: number,
+  fontSize: number,
+) {
+  let lineCount = 1;
+  let lineWidth = 0;
+
+  segments.forEach((segment) => {
+    setCanvasTextFormatting(context, segment.formatting, fontSize);
+    for (let index = 0; index < segment.text.length; index += 1) {
+      const character = segment.text[index];
+      if (character === "\r") continue;
+      if (character === "\n") {
+        lineCount += 1;
+        lineWidth = 0;
+        continue;
+      }
+      const characterWidth = context.measureText(character).width;
+      if (lineWidth > 0 && lineWidth + characterWidth > maxWidth) {
+        lineCount += 1;
+        lineWidth = characterWidth;
+      } else {
+        lineWidth += characterWidth;
+      }
+    }
+  });
+
+  return lineCount;
+}
+
 function splitReportLines(text: string) {
   return text
     .split(/\r?\n|；|;/)
@@ -1068,6 +1396,52 @@ function parseKeyValueRows(text: string): KeyValueRow[] {
     const label = line.slice(0, separatorIndex).trim();
     const value = line.slice(separatorIndex + 1).trim();
     return { label, value: value || emptySectionPlaceholder };
+  });
+}
+
+type KeyValueRowSourceRange = {
+  labelStart: number;
+  labelEnd: number;
+  valueStart: number;
+  valueEnd: number;
+};
+
+type TextSourceRange = {
+  start: number;
+  end: number;
+  text: string;
+};
+
+function locateNonEmptyLineSourceRanges(sourceText: string): TextSourceRange[] {
+  const ranges: TextSourceRange[] = [];
+  const linePattern = /[^\r\n]+/g;
+  let match = linePattern.exec(sourceText);
+  while (match) {
+    const line = match[0];
+    const leadingWhitespace = line.length - line.trimStart().length;
+    const text = line.trim();
+    const start = match.index + leadingWhitespace;
+    if (text) ranges.push({ start, end: start + text.length, text });
+    match = linePattern.exec(sourceText);
+  }
+  return ranges;
+}
+
+function locateKeyValueRowSourceRanges(
+  sourceText: string,
+  rows: KeyValueRow[],
+): KeyValueRowSourceRange[] {
+  let cursor = 0;
+  return rows.map((row) => {
+    const labelStart = sourceText.indexOf(row.label, cursor);
+    const labelEnd = labelStart >= 0 ? labelStart + row.label.length : -1;
+    const valueStart =
+      row.value === emptySectionPlaceholder || labelEnd < 0
+        ? -1
+        : sourceText.indexOf(row.value, labelEnd);
+    const valueEnd = valueStart >= 0 ? valueStart + row.value.length : -1;
+    cursor = Math.max(cursor, valueEnd >= 0 ? valueEnd : labelEnd);
+    return { labelStart, labelEnd, valueStart, valueEnd };
   });
 }
 
@@ -1139,22 +1513,6 @@ function getCurrentTimelineItem(timelineItems: TimelineItem[]) {
   );
 }
 
-function buildActionItems(text: string) {
-  const lines = splitReportLines(text);
-  return lines.length > 0 ? lines : [emptySectionPlaceholder];
-}
-
-function summarizeAdvisorFeedback(text: string) {
-  const normalized = text
-    .replace(/\r/g, "")
-    .split("\n")
-    .map((line) => line.trim())
-    .join("\n")
-    .trim();
-  if (!normalized) return emptySectionPlaceholder;
-  return normalized;
-}
-
 export function MonthlyReportWorkspace() {
   const [applicationType, setApplicationType] =
     useState<MonthlyReportApplicationType>(initialApplicationType);
@@ -1170,6 +1528,16 @@ export function MonthlyReportWorkspace() {
       getMonthlyReportApplicationConfig(initialApplicationType).theme.textColor,
     ),
   );
+  const [textFormattingRanges, setTextFormattingRanges] = useState(() =>
+    buildDefaultTextFormattingRanges(),
+  );
+  const previousFormattedTextRef = useRef({
+    completedThisMonth: content.completedThisMonth,
+    nextMonthPlan: content.nextMonthPlan,
+    clientTasks: content.clientTasks,
+    studentBasicInfo: content.studentBasicInfo,
+    materialCollectionStatus: content.materialCollectionStatus,
+  });
   const [communicationText, setCommunicationText] = useState("");
   const [screenshotRecognitionText, setScreenshotRecognitionText] = useState("");
   const [recognizedFields, setRecognizedFields] = useState<RecognizedField[]>([]);
@@ -1215,6 +1583,40 @@ export function MonthlyReportWorkspace() {
     fontFamily: theme.fontFamily,
   };
 
+  useEffect(() => {
+    const nextFormattedText = {
+      completedThisMonth: content.completedThisMonth,
+      nextMonthPlan: content.nextMonthPlan,
+      clientTasks: content.clientTasks,
+      studentBasicInfo: content.studentBasicInfo,
+      materialCollectionStatus: content.materialCollectionStatus,
+    };
+    const previousFormattedText = previousFormattedTextRef.current;
+    setTextFormattingRanges((current) => {
+      let hasChanges = false;
+      const next = { ...current };
+      (Object.keys(nextFormattedText) as TextFormattingKey[]).forEach((field) => {
+        if (previousFormattedText[field] === nextFormattedText[field]) return;
+        hasChanges = true;
+        next[field] = remapTextFormattingRanges(
+          previousFormattedText[field],
+          nextFormattedText[field],
+          textFormatting[field],
+          current[field],
+        );
+      });
+      return hasChanges ? next : current;
+    });
+    previousFormattedTextRef.current = nextFormattedText;
+  }, [
+    content.clientTasks,
+    content.completedThisMonth,
+    content.materialCollectionStatus,
+    content.nextMonthPlan,
+    content.studentBasicInfo,
+    textFormatting,
+  ]);
+
   function updateContent(field: keyof EditableReportContent, value: string) {
     setContent((current) => ({ ...current, [field]: value }));
     setIsDirty(true);
@@ -1222,9 +1624,21 @@ export function MonthlyReportWorkspace() {
 
   function updateTextFormatting(
     field: TextFormattingKey,
-    formatting: TextFormatting,
+    patch: Partial<TextFormatting>,
+    selection: TextSelection,
   ) {
-    setTextFormatting((current) => ({ ...current, [field]: formatting }));
+    const result = applyTextFormattingPatch(
+      content[field],
+      textFormatting[field],
+      textFormattingRanges[field],
+      selection,
+      patch,
+    );
+    setTextFormatting((current) => ({ ...current, [field]: result.formatting }));
+    setTextFormattingRanges((current) => ({
+      ...current,
+      [field]: result.ranges,
+    }));
     setIsDirty(true);
   }
 
@@ -1243,6 +1657,56 @@ export function MonthlyReportWorkspace() {
     return `color:${formatting.color};font-weight:${formatting.bold ? 700 : 400};text-decoration:${formatting.underline ? "underline" : "none"};text-underline-offset:2px`;
   }
 
+  function getStyledSegments(
+    field: TextFormattingKey,
+    text: string,
+    start = 0,
+    end = text.length,
+  ) {
+    return buildStyledTextSegments(
+      text,
+      textFormatting[field],
+      textFormattingRanges[field],
+      start,
+      end,
+    );
+  }
+
+  function renderStyledText(
+    field: TextFormattingKey,
+    text: string,
+    start = 0,
+    end = text.length,
+  ) {
+    return getStyledSegments(field, text, start, end).map((segment, index) => (
+      <span
+        key={`${start}-${index}-${segment.text}`}
+        style={{
+          color: segment.formatting.color,
+          fontWeight: segment.formatting.bold ? 700 : 400,
+          textDecoration: segment.formatting.underline ? "underline" : "none",
+          textUnderlineOffset: "2px",
+        }}
+      >
+        {segment.text}
+      </span>
+    ));
+  }
+
+  function getStyledTextHtml(
+    field: TextFormattingKey,
+    text: string,
+    start = 0,
+    end = text.length,
+  ) {
+    return getStyledSegments(field, text, start, end)
+      .map(
+        (segment) =>
+          `<span style="color:${segment.formatting.color};font-weight:${segment.formatting.bold ? 700 : 400};text-decoration:${segment.formatting.underline ? "underline" : "none"};text-underline-offset:2px">${escapeHtml(segment.text).replace(/\r?\n/g, "<br>")}</span>`,
+      )
+      .join("");
+  }
+
   function applyApplicationType(
     nextApplicationType: MonthlyReportApplicationType,
     resetContent: boolean,
@@ -1254,6 +1718,7 @@ export function MonthlyReportWorkspace() {
     if (resetContent) {
       setContent(buildDefaultContent(nextApplicationType));
       setTextFormatting(buildDefaultTextFormatting(nextConfig.theme.textColor));
+      setTextFormattingRanges(buildDefaultTextFormattingRanges());
       setCommunicationText("");
       setScreenshotRecognitionText("");
       setRecognizedFields([]);
@@ -1714,11 +2179,30 @@ export function MonthlyReportWorkspace() {
     (format) => `${exportBaseName}.${format.toLowerCase()}`,
   );
   const studentInfoRows = parseKeyValueRows(content.studentBasicInfo);
+  const materialKeyValueRows = parseKeyValueRows(content.materialCollectionStatus);
   const materialRows = parseMaterialRows(content.materialCollectionStatus);
+  const studentInfoSourceRanges = locateKeyValueRowSourceRanges(
+    content.studentBasicInfo,
+    studentInfoRows,
+  );
+  const materialSourceRanges = locateKeyValueRowSourceRanges(
+    content.materialCollectionStatus,
+    materialKeyValueRows,
+  );
   const metricSummary = buildMetricSummary(studentInfoRows, materialRows);
   const currentTimelineItem = getCurrentTimelineItem(timelineItems);
-  const nextActionItems = buildActionItems(content.nextMonthPlan);
-  const advisorFeedback = summarizeAdvisorFeedback(content.completedThisMonth);
+  const completedThisMonthDisplay = content.completedThisMonth.trim()
+    ? content.completedThisMonth
+    : emptySectionPlaceholder;
+  const nextMonthPlanDisplay = content.nextMonthPlan.trim()
+    ? content.nextMonthPlan
+    : emptySectionPlaceholder;
+  const clientTasksDisplay = content.clientTasks.trim()
+    ? content.clientTasks
+    : emptySectionPlaceholder;
+  const nextMonthPlanLineRanges = locateNonEmptyLineSourceRanges(
+    content.nextMonthPlan,
+  );
   const reportTitle =
     content.title.trim() || `${content.studentName}申请季阶段性反馈报告`;
   const timelineProgress = timelineItems.length
@@ -1753,28 +2237,62 @@ export function MonthlyReportWorkspace() {
     const infoRowsHtml =
       studentInfoRows.length > 0
         ? studentInfoRows
-            .map(
-              (row) =>
-                `<tr><th>${escapeHtml(row.label)}</th><td style="${getTextFormattingCss("studentBasicInfo")}">${escapeHtml(row.value)}</td></tr>`,
-            )
+            .map((row, index) => {
+              const sourceRange = studentInfoSourceRanges[index];
+              const labelHtml =
+                sourceRange?.labelStart >= 0
+                  ? getStyledTextHtml(
+                      "studentBasicInfo",
+                      content.studentBasicInfo,
+                      sourceRange.labelStart,
+                      sourceRange.labelEnd,
+                    )
+                  : escapeHtml(row.label);
+              const valueHtml =
+                sourceRange?.valueStart >= 0
+                  ? getStyledTextHtml(
+                      "studentBasicInfo",
+                      content.studentBasicInfo,
+                      sourceRange.valueStart,
+                      sourceRange.valueEnd,
+                    )
+                  : escapeHtml(row.value);
+              return `<tr><th>${labelHtml}</th><td style="${getTextFormattingCss("studentBasicInfo")}">${valueHtml}</td></tr>`;
+            })
             .join("")
         : `<tr><th>基础信息</th><td>${emptySectionPlaceholder}</td></tr>`;
     const materialRowsHtml =
       materialRows.length > 0
         ? materialRows
-            .map((row) => {
+            .map((row, index) => {
               const style = statusStyles[row.status];
+              const sourceRange = materialSourceRanges[index];
+              const itemHtml =
+                sourceRange?.labelStart >= 0
+                  ? getStyledTextHtml(
+                      "materialCollectionStatus",
+                      content.materialCollectionStatus,
+                      sourceRange.labelStart,
+                      sourceRange.labelEnd,
+                    )
+                  : escapeHtml(row.item);
+              const remarkHtml =
+                sourceRange?.valueStart >= 0
+                  ? getStyledTextHtml(
+                      "materialCollectionStatus",
+                      content.materialCollectionStatus,
+                      sourceRange.valueStart,
+                      sourceRange.valueEnd,
+                    )
+                  : escapeHtml(row.remark);
               return `<tr style="${getTextFormattingCss("materialCollectionStatus")}">
-                <td>${escapeHtml(row.item)}</td>
+                <td>${itemHtml}</td>
                 <td><span class="status-pill" style="background:${style.bg};color:${style.color}">${escapeHtml(row.statusLabel)}</span></td>
-                <td>${escapeHtml(row.remark)}</td>
+                <td>${remarkHtml}</td>
               </tr>`;
             })
             .join("")
         : `<tr><td>材料收集</td><td><span class="status-pill">${emptySectionPlaceholder}</span></td><td>${emptySectionPlaceholder}</td></tr>`;
-    const nextActionsHtml = nextActionItems
-      .map((item) => `<p>${escapeHtml(item)}</p>`)
-      .join("");
     const attachmentHtml = escapeHtml(attachmentNames);
     const sectionClass = (key: ReportModuleKey) =>
       highlightedModules[key] ? "section-card highlighted" : "section-card";
@@ -1796,13 +2314,22 @@ export function MonthlyReportWorkspace() {
         return `<section class="${sectionClass(key)}" data-layout="${modules.basicInfo ? "half" : "full"}"><h2 class="section-title">材料收集</h2><table><thead><tr><th>材料项目</th><th>状态</th><th>备注</th></tr></thead><tbody>${materialRowsHtml}</tbody></table></section>`;
       }
       if (key === "completedThisMonth") {
-        return `<section class="${sectionClass(key)}"><h2 class="section-title">阶段性反馈</h2><p style="${getTextFormattingCss("completedThisMonth")}">${escapeHtml(content.completedThisMonth)}</p></section>`;
+        return `<section class="${sectionClass(key)}"><h2 class="section-title">阶段性反馈</h2><p style="${getTextFormattingCss("completedThisMonth")}">${content.completedThisMonth.trim() ? getStyledTextHtml("completedThisMonth", content.completedThisMonth) : escapeHtml(emptySectionPlaceholder)}</p></section>`;
       }
       if (key === "nextMonthPlan") {
-        return `<section class="${sectionClass(key)}"><h2 class="section-title">下一阶段计划</h2><div class="plain-lines" style="${getTextFormattingCss("nextMonthPlan")}">${nextActionsHtml}</div></section>`;
+        const planLinesHtml =
+          nextMonthPlanLineRanges.length > 0
+            ? nextMonthPlanLineRanges
+                .map(
+                  (line) =>
+                    `<p>${getStyledTextHtml("nextMonthPlan", content.nextMonthPlan, line.start, line.end)}</p>`,
+                )
+                .join("")
+            : `<p>${escapeHtml(emptySectionPlaceholder)}</p>`;
+        return `<section class="${sectionClass(key)}"><h2 class="section-title">下一阶段计划</h2><div class="plain-lines" style="${getTextFormattingCss("nextMonthPlan")}">${planLinesHtml}</div></section>`;
       }
       if (key === "clientTasks") {
-        return `<section class="${sectionClass(key)}"><h2 class="section-title">需要学生/家庭配合</h2><p style="${getTextFormattingCss("clientTasks")}">${escapeHtml(content.clientTasks)}</p></section>`;
+        return `<section class="${sectionClass(key)}"><h2 class="section-title">需要学生/家庭配合</h2><p style="${getTextFormattingCss("clientTasks")}">${content.clientTasks.trim() ? getStyledTextHtml("clientTasks", content.clientTasks) : escapeHtml(emptySectionPlaceholder)}</p></section>`;
       }
       if (key === "attachments" && attachmentNames) {
         return `<section class="${sectionClass(key)} attachments"><h2 class="section-title">附件</h2><p>${attachmentHtml}</p></section>`;
@@ -1907,15 +2434,72 @@ ${renderedReportModules}
     const canvasWidth = 1240;
     const a4PageHeight = Math.floor((canvasWidth * 841.89) / 595.28);
     const heroY = 198;
+    const pageX = 70;
+    const pageY = 70;
+    const pageWidth = canvasWidth - 140;
+    const contentX = 110;
+    const contentWidth = canvasWidth - 220;
     const shouldPairInformationSections = modules.basicInfo && modules.materialCollection;
+    const measurementContext = document.createElement("canvas").getContext("2d");
+    const fallbackSegments = (field: TextFormattingKey, text: string) => [
+      { text, formatting: textFormatting[field] },
+    ];
+    const getSourceSegments = (
+      field: TextFormattingKey,
+      sourceText: string,
+      start: number,
+      end: number,
+      fallbackText: string,
+    ) =>
+      start >= 0
+        ? getStyledSegments(field, sourceText, start, end)
+        : fallbackSegments(field, fallbackText);
     const estimateWrappedLines = (text: string, charactersPerLine: number) =>
       splitReportLines(text).reduce(
         (total, line) => total + Math.max(1, Math.ceil(line.length / charactersPerLine)),
         0,
       ) || 1;
-    const estimateBasicRowHeight = (row: KeyValueRow, compact: boolean) => {
-      const valueLines = estimateWrappedLines(row.value, compact ? 18 : 30);
-      return Math.max(compact ? 24 : 30, valueLines * (compact ? 18 : 22) + 6);
+    const estimateBasicRowHeight = (
+      row: KeyValueRow,
+      compact: boolean,
+      index: number,
+    ) => {
+      if (!measurementContext) return compact ? 24 : 30;
+      const pairGap = 20;
+      const cardWidth = shouldPairInformationSections
+        ? (contentWidth - pairGap) / 2
+        : contentWidth;
+      const narrowCard = cardWidth < 700;
+      const labelWidth = narrowCard ? 126 : 172;
+      const fontSize = compact ? 13 : narrowCard ? 15 : 17;
+      const sourceRange = studentInfoSourceRanges[index];
+      const labelSegments = getSourceSegments(
+        "studentBasicInfo",
+        content.studentBasicInfo,
+        sourceRange?.labelStart ?? -1,
+        sourceRange?.labelEnd ?? -1,
+        row.label,
+      );
+      const valueSegments = getSourceSegments(
+        "studentBasicInfo",
+        content.studentBasicInfo,
+        sourceRange?.valueStart ?? -1,
+        sourceRange?.valueEnd ?? -1,
+        row.value,
+      );
+      const labelLines = measureWrappedStyledTextLines(
+        measurementContext,
+        labelSegments,
+        labelWidth - 18,
+        fontSize,
+      );
+      const valueLines = measureWrappedStyledTextLines(
+        measurementContext,
+        valueSegments,
+        cardWidth - labelWidth - 18,
+        fontSize,
+      );
+      return Math.max(compact ? 24 : 30, Math.max(labelLines, valueLines) * 20 + 4);
     };
     const estimateMaterialRowHeight = (
       row: MaterialReportRow,
@@ -1953,7 +2537,8 @@ ${renderedReportModules}
         return (
           (compact ? 58 : 62) +
           rows.reduce(
-            (height, row) => height + estimateBasicRowHeight(row, compact),
+            (height, row, index) =>
+              height + estimateBasicRowHeight(row, compact, index),
             0,
           )
         );
@@ -1980,19 +2565,18 @@ ${renderedReportModules}
       }
       if (key === "completedThisMonth") {
         return compact
-          ? Math.max(90, 54 + estimateWrappedLines(advisorFeedback, 70) * 21)
-          : Math.max(136, 72 + estimateWrappedLines(advisorFeedback, 62) * 25);
+          ? Math.max(90, 54 + estimateWrappedLines(completedThisMonthDisplay, 70) * 21)
+          : Math.max(136, 72 + estimateWrappedLines(completedThisMonthDisplay, 62) * 25);
       }
       if (key === "nextMonthPlan") {
-        const nextPlanText = nextActionItems.join("\n");
         return compact
-          ? Math.max(90, 54 + estimateWrappedLines(nextPlanText, 70) * 21)
-          : Math.max(136, 72 + estimateWrappedLines(nextPlanText, 62) * 25);
+          ? Math.max(90, 54 + estimateWrappedLines(nextMonthPlanDisplay, 70) * 21)
+          : Math.max(136, 72 + estimateWrappedLines(nextMonthPlanDisplay, 62) * 25);
       }
       if (key === "clientTasks") {
         return compact
-          ? Math.max(90, 54 + estimateWrappedLines(content.clientTasks, 70) * 21)
-          : Math.max(122, 72 + estimateWrappedLines(content.clientTasks, 62) * 25);
+          ? Math.max(90, 54 + estimateWrappedLines(clientTasksDisplay, 70) * 21)
+          : Math.max(122, 72 + estimateWrappedLines(clientTasksDisplay, 62) * 25);
       }
       return compact
         ? Math.max(82, 54 + estimateWrappedLines(attachmentNames, 70) * 21)
@@ -2041,12 +2625,6 @@ ${renderedReportModules}
     }
     const canvasContext = context;
 
-    const pageX = 70;
-    const pageY = 70;
-    const pageWidth = canvas.width - 140;
-    const contentX = 110;
-    const contentWidth = canvas.width - 220;
-
     function roundedRect(
       x: number,
       rectY: number,
@@ -2087,13 +2665,6 @@ ${renderedReportModules}
       canvasContext.strokeStyle = stroke;
       canvasContext.lineWidth = 1;
       canvasContext.stroke();
-    }
-
-    function applyCanvasTextFormatting(field: TextFormattingKey, size: number) {
-      const formatting = textFormatting[field];
-      canvasContext.fillStyle = formatting.color;
-      canvasContext.font = `${formatting.bold ? "bold " : ""}${size}px Arial, "PingFang SC", "Microsoft YaHei", sans-serif`;
-      return formatting.underline;
     }
 
     context.fillStyle = theme.backgroundColor;
@@ -2243,7 +2814,8 @@ ${renderedReportModules}
       canvasContext.font = `bold ${useCompactExport ? 19 : compact ? 21 : 23}px Arial, "PingFang SC", "Microsoft YaHei", sans-serif`;
       canvasContext.fillText("基础信息", cardX + 18, titleY);
       let rowY = firstRowY;
-      basicInfoRows.forEach((row) => {
+      basicInfoRows.forEach((row, index) => {
+        const sourceRange = studentInfoSourceRanges[index];
         canvasContext.fillStyle = theme.mutedTextColor;
         canvasContext.font = `${useCompactExport ? 13 : compact ? 15 : 17}px Arial, "PingFang SC", "Microsoft YaHei", sans-serif`;
         drawWrappedText(
@@ -2254,22 +2826,24 @@ ${renderedReportModules}
           labelWidth - 18,
           20,
         );
-        const underline = applyCanvasTextFormatting(
-          "studentBasicInfo",
-          useCompactExport ? 13 : compact ? 15 : 17,
-        );
-        drawWrappedText(
+        drawWrappedStyledText(
           canvasContext,
-          row.value,
+          getSourceSegments(
+            "studentBasicInfo",
+            content.studentBasicInfo,
+            sourceRange?.valueStart ?? -1,
+            sourceRange?.valueEnd ?? -1,
+            row.value,
+          ),
           cardX + labelWidth,
           rowY,
           cardWidth - labelWidth - 18,
           20,
-          underline,
+          useCompactExport ? 13 : compact ? 15 : 17,
         );
         rowY += Math.max(
           rowStride,
-          estimateBasicRowHeight(row, useCompactExport),
+          estimateBasicRowHeight(row, useCompactExport, index),
         );
       });
     }
@@ -2297,19 +2871,22 @@ ${renderedReportModules}
       canvasContext.fillText("状态", statusX, headerY);
       canvasContext.fillText("备注", remarkX, headerY);
       let rowY = firstRowY;
-      collectionRows.forEach((row) => {
-        const underline = applyCanvasTextFormatting(
-          "materialCollectionStatus",
-          useCompactExport ? 12 : compact ? 14 : 16,
-        );
-        drawWrappedText(
+      collectionRows.forEach((row, index) => {
+        const sourceRange = materialSourceRanges[index];
+        drawWrappedStyledText(
           canvasContext,
-          row.item,
+          getSourceSegments(
+            "materialCollectionStatus",
+            content.materialCollectionStatus,
+            sourceRange?.labelStart ?? -1,
+            sourceRange?.labelEnd ?? -1,
+            row.item,
+          ),
           itemX,
           rowY,
           statusX - itemX - 10,
           19,
-          underline,
+          useCompactExport ? 12 : compact ? 14 : 16,
         );
         const statusStyle = statusStyles[row.status];
         const statusFontSize = useCompactExport ? 11 : compact ? 13 : 15;
@@ -2332,18 +2909,20 @@ ${renderedReportModules}
         canvasContext.fillStyle = statusStyle.color;
         canvasContext.font = `bold ${statusFontSize}px Arial, "PingFang SC", "Microsoft YaHei", sans-serif`;
         canvasContext.fillText(row.statusLabel, statusX, rowY);
-        const remarkUnderline = applyCanvasTextFormatting(
-          "materialCollectionStatus",
-          useCompactExport ? 11 : compact ? 13 : 15,
-        );
-        drawWrappedText(
+        drawWrappedStyledText(
           canvasContext,
-          row.remark,
+          getSourceSegments(
+            "materialCollectionStatus",
+            content.materialCollectionStatus,
+            sourceRange?.valueStart ?? -1,
+            sourceRange?.valueEnd ?? -1,
+            row.remark,
+          ),
           remarkX,
           rowY,
           cardX + cardWidth - remarkX - 18,
           19,
-          remarkUnderline,
+          useCompactExport ? 11 : compact ? 13 : 15,
         );
         rowY += Math.max(
           rowStride,
@@ -2585,18 +3164,16 @@ ${renderedReportModules}
             contentX + 18,
             cardY + (useCompactExport ? 30 : 34),
           );
-          const underline = applyCanvasTextFormatting(
-            "completedThisMonth",
-            useCompactExport ? 14 : 17,
-          );
-          drawWrappedText(
+          drawWrappedStyledText(
             context,
-            advisorFeedback,
+            content.completedThisMonth.trim()
+              ? getStyledSegments("completedThisMonth", content.completedThisMonth)
+              : fallbackSegments("completedThisMonth", emptySectionPlaceholder),
             contentX + 18,
             cardY + (useCompactExport ? 54 : 68),
             contentWidth - 36,
             useCompactExport ? 21 : 25,
-            underline,
+            useCompactExport ? 14 : 17,
           );
         });
       }
@@ -2610,18 +3187,16 @@ ${renderedReportModules}
             contentX + 18,
             cardY + (useCompactExport ? 30 : 34),
           );
-          const underline = applyCanvasTextFormatting(
-            "nextMonthPlan",
-            useCompactExport ? 14 : 17,
-          );
-          drawWrappedText(
+          drawWrappedStyledText(
             context,
-            nextActionItems.join("\n"),
+            content.nextMonthPlan.trim()
+              ? getStyledSegments("nextMonthPlan", content.nextMonthPlan)
+              : fallbackSegments("nextMonthPlan", emptySectionPlaceholder),
             contentX + 18,
             cardY + (useCompactExport ? 54 : 68),
             contentWidth - 36,
             useCompactExport ? 21 : 25,
-            underline,
+            useCompactExport ? 14 : 17,
           );
         });
       }
@@ -2635,18 +3210,16 @@ ${renderedReportModules}
             contentX + 18,
             cardY + (useCompactExport ? 30 : 34),
           );
-          const underline = applyCanvasTextFormatting(
-            "clientTasks",
-            useCompactExport ? 14 : 17,
-          );
-          drawWrappedText(
+          drawWrappedStyledText(
             context,
-            content.clientTasks,
+            content.clientTasks.trim()
+              ? getStyledSegments("clientTasks", content.clientTasks)
+              : fallbackSegments("clientTasks", emptySectionPlaceholder),
             contentX + 18,
             cardY + (useCompactExport ? 54 : 68),
             contentWidth - 36,
             useCompactExport ? 21 : 25,
-            underline,
+            useCompactExport ? 14 : 17,
           );
         });
       }
@@ -2898,17 +3471,36 @@ ${renderedReportModules}
               {(studentInfoRows.length > 0
                 ? studentInfoRows
                 : [{ label: "基础信息", value: emptySectionPlaceholder }]
-              ).map((row) => (
+              ).map((row, index) => {
+                const sourceRange = studentInfoSourceRanges[index];
+                return (
                 <div className="grid grid-cols-[112px_1fr] gap-2 py-2" key={row.label}>
-                  <span style={{ color: theme.mutedTextColor }}>{row.label}</span>
+                  <span style={{ color: theme.mutedTextColor }}>
+                    {sourceRange?.labelStart >= 0
+                      ? renderStyledText(
+                          "studentBasicInfo",
+                          content.studentBasicInfo,
+                          sourceRange.labelStart,
+                          sourceRange.labelEnd,
+                        )
+                      : row.label}
+                  </span>
                   <span
                     className="break-words"
                     style={getTextFormattingStyle("studentBasicInfo")}
                   >
-                    {row.value}
+                    {sourceRange?.valueStart >= 0
+                      ? renderStyledText(
+                          "studentBasicInfo",
+                          content.studentBasicInfo,
+                          sourceRange.valueStart,
+                          sourceRange.valueEnd,
+                        )
+                      : row.value}
                   </span>
                 </div>
-              ))}
+                );
+              })}
             </div>
           </div>
         </section>
@@ -2938,8 +3530,9 @@ ${renderedReportModules}
                       remark: emptySectionPlaceholder,
                     },
                   ]
-              ).map((row) => {
+              ).map((row, index) => {
                 const style = statusStyles[row.status];
+                const sourceRange = materialSourceRanges[index];
                 return (
                   <div
                     className="grid grid-cols-[1fr_72px_1fr] gap-2 py-2"
@@ -2952,7 +3545,14 @@ ${renderedReportModules}
                       className="break-words"
                       style={getTextFormattingStyle("materialCollectionStatus")}
                     >
-                      {row.item}
+                      {sourceRange?.labelStart >= 0
+                        ? renderStyledText(
+                            "materialCollectionStatus",
+                            content.materialCollectionStatus,
+                            sourceRange.labelStart,
+                            sourceRange.labelEnd,
+                          )
+                        : row.item}
                     </span>
                     <span
                       className="inline-flex h-fit rounded-full px-2 py-1 text-[10px] font-semibold"
@@ -2964,7 +3564,14 @@ ${renderedReportModules}
                       className="break-words"
                       style={getTextFormattingStyle("materialCollectionStatus")}
                     >
-                      {row.remark}
+                      {sourceRange?.valueStart >= 0
+                        ? renderStyledText(
+                            "materialCollectionStatus",
+                            content.materialCollectionStatus,
+                            sourceRange.valueStart,
+                            sourceRange.valueEnd,
+                          )
+                        : row.remark}
                     </span>
                   </div>
                 );
@@ -2986,7 +3593,9 @@ ${renderedReportModules}
               className="mt-2 whitespace-pre-line"
               style={getTextFormattingStyle("completedThisMonth")}
             >
-              {advisorFeedback}
+              {content.completedThisMonth.trim()
+                ? renderStyledText("completedThisMonth", content.completedThisMonth)
+                : emptySectionPlaceholder}
             </p>
           </div>
         </section>
@@ -3004,9 +3613,20 @@ ${renderedReportModules}
               className="mt-2 space-y-1"
               style={getTextFormattingStyle("nextMonthPlan")}
             >
-              {nextActionItems.map((item) => (
-                <p className="whitespace-pre-line" key={item}>{item}</p>
-              ))}
+              {nextMonthPlanLineRanges.length > 0 ? (
+                nextMonthPlanLineRanges.map((line) => (
+                  <p key={`${line.start}-${line.text}`}>
+                    {renderStyledText(
+                      "nextMonthPlan",
+                      content.nextMonthPlan,
+                      line.start,
+                      line.end,
+                    )}
+                  </p>
+                ))
+              ) : (
+                <p>{emptySectionPlaceholder}</p>
+              )}
             </div>
           </div>
         </section>
@@ -3024,7 +3644,9 @@ ${renderedReportModules}
               className="mt-1 whitespace-pre-line"
               style={getTextFormattingStyle("clientTasks")}
             >
-              {content.clientTasks}
+              {content.clientTasks.trim()
+                ? renderStyledText("clientTasks", content.clientTasks)
+                : emptySectionPlaceholder}
             </p>
           </div>
         </section>
@@ -3446,11 +4068,12 @@ ${renderedReportModules}
             <div className="mt-4 grid gap-4 lg:grid-cols-2">
               <ReportTextEditor
                 formatting={textFormatting.completedThisMonth}
+                formattingRanges={textFormattingRanges.completedThisMonth}
                 id="completed-this-month"
                 label="阶段性反馈"
                 value={content.completedThisMonth}
-                onFormattingChange={(formatting) =>
-                  updateTextFormatting("completedThisMonth", formatting)
+                onFormattingChange={(patch, selection) =>
+                  updateTextFormatting("completedThisMonth", patch, selection)
                 }
                 onValueChange={(value) =>
                   updateContent("completedThisMonth", value)
@@ -3458,22 +4081,24 @@ ${renderedReportModules}
               />
               <ReportTextEditor
                 formatting={textFormatting.nextMonthPlan}
+                formattingRanges={textFormattingRanges.nextMonthPlan}
                 id="next-month-plan"
                 label="下一阶段计划"
                 value={content.nextMonthPlan}
-                onFormattingChange={(formatting) =>
-                  updateTextFormatting("nextMonthPlan", formatting)
+                onFormattingChange={(patch, selection) =>
+                  updateTextFormatting("nextMonthPlan", patch, selection)
                 }
                 onValueChange={(value) => updateContent("nextMonthPlan", value)}
               />
               <ReportTextEditor
                 formatting={textFormatting.clientTasks}
+                formattingRanges={textFormattingRanges.clientTasks}
                 id="client-tasks"
                 label="需要学生/家庭配合"
                 minHeightClass="min-h-24"
                 value={content.clientTasks}
-                onFormattingChange={(formatting) =>
-                  updateTextFormatting("clientTasks", formatting)
+                onFormattingChange={(patch, selection) =>
+                  updateTextFormatting("clientTasks", patch, selection)
                 }
                 onValueChange={(value) => updateContent("clientTasks", value)}
               />
@@ -3517,26 +4142,32 @@ ${renderedReportModules}
               <ReportTextEditor
                 className="lg:col-span-2"
                 formatting={textFormatting.studentBasicInfo}
+                formattingRanges={textFormattingRanges.studentBasicInfo}
                 id="student-basic-info"
                 label="基础信息"
                 minHeightClass="min-h-24"
                 placeholder="就读年级、就读学校、国籍、生日、语言成绩、标化考试、AP、GPA 等信息会显示在这里。"
                 value={content.studentBasicInfo}
-                onFormattingChange={(formatting) =>
-                  updateTextFormatting("studentBasicInfo", formatting)
+                onFormattingChange={(patch, selection) =>
+                  updateTextFormatting("studentBasicInfo", patch, selection)
                 }
                 onValueChange={(value) => updateContent("studentBasicInfo", value)}
               />
               <ReportTextEditor
                 className="lg:col-span-2"
                 formatting={textFormatting.materialCollectionStatus}
+                formattingRanges={textFormattingRanges.materialCollectionStatus}
                 id="material-collection-status"
                 label="材料收集"
                 minHeightClass="min-h-24"
                 placeholder="简历信息表、文书信息表、推荐人信息、成绩单、护照、签证页、存款证明等状态会显示在这里。"
                 value={content.materialCollectionStatus}
-                onFormattingChange={(formatting) =>
-                  updateTextFormatting("materialCollectionStatus", formatting)
+                onFormattingChange={(patch, selection) =>
+                  updateTextFormatting(
+                    "materialCollectionStatus",
+                    patch,
+                    selection,
+                  )
                 }
                 onValueChange={(value) =>
                   updateContent("materialCollectionStatus", value)

@@ -526,6 +526,58 @@ describe("monthly reports page", () => {
     });
   });
 
+  it("applies color, bold, and underline only to the selected text", async () => {
+    const exportedBlobs: Blob[] = [];
+    vi.spyOn(URL, "createObjectURL").mockImplementation((blob) => {
+      exportedBlobs.push(blob as Blob);
+      return "blob:monthly-report";
+    });
+    vi.spyOn(URL, "revokeObjectURL").mockImplementation(() => {});
+    vi.spyOn(HTMLAnchorElement.prototype, "click").mockImplementation(() => {});
+
+    render(<MonthlyReportsPage />);
+
+    const feedbackInput = screen.getByLabelText("阶段性反馈") as HTMLTextAreaElement;
+    fireEvent.change(feedbackInput, {
+      target: { value: "只加粗这部分，其他保持默认" },
+    });
+    feedbackInput.setSelectionRange(0, 3);
+    fireEvent.select(feedbackInput);
+
+    expect(screen.getByText("已选 3 字")).toBeInTheDocument();
+    fireEvent.change(screen.getByLabelText("阶段性反馈文字颜色"), {
+      target: { value: "#b91c1c" },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "阶段性反馈加粗" }));
+    fireEvent.click(screen.getByRole("button", { name: "阶段性反馈下划线" }));
+
+    const feedbackParagraph = screen
+      .getByTestId("report-section-completedThisMonth")
+      .querySelector("p");
+    const selectedSpan = Array.from(
+      feedbackParagraph?.querySelectorAll("span") ?? [],
+    ).find((span) => span.textContent === "只加粗");
+    const remainingSpan = Array.from(
+      feedbackParagraph?.querySelectorAll("span") ?? [],
+    ).find((span) => span.textContent?.includes("这部分"));
+
+    expect(selectedSpan).toHaveStyle({
+      color: "#b91c1c",
+      fontWeight: "700",
+      textDecoration: "underline",
+    });
+    expect(remainingSpan).toHaveStyle({
+      fontWeight: "400",
+      textDecoration: "none",
+    });
+
+    fireEvent.click(screen.getByRole("button", { name: "导出反馈报告" }));
+    await waitFor(() => expect(exportedBlobs).toHaveLength(1));
+    const exportedText = await exportedBlobs[0].text();
+    expect(exportedText).toContain("font-weight:700;text-decoration:underline");
+    expect(exportedText).toContain("只加粗</span>");
+  });
+
   it("preserves next-stage plan line breaks without adding list bullets", () => {
     render(<MonthlyReportsPage />);
 
