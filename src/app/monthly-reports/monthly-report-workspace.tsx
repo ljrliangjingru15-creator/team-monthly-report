@@ -3,9 +3,9 @@
 import {
   ArrowDown,
   ArrowUp,
+  Bold as BoldIcon,
   Check,
   Download,
-  Eye,
   FileText,
   GripVertical,
   Paperclip,
@@ -15,6 +15,7 @@ import {
   Sparkles,
   Star,
   Trash2,
+  Underline as UnderlineIcon,
   Upload,
   Wand2,
 } from "lucide-react";
@@ -30,8 +31,6 @@ type EditableReportContent = {
   title: string;
   studentName: string;
   season: string;
-  templateName: string;
-  styleLabel: string;
   departmentLabel: string;
   completedThisMonth: string;
   nextMonthPlan: string;
@@ -70,8 +69,6 @@ type ModuleVisibility = {
   studentName: boolean;
   season: boolean;
   applicationType: boolean;
-  templateName: boolean;
-  styleLabel: boolean;
   stageFocus: boolean;
   summary: boolean;
   timeline: boolean;
@@ -82,6 +79,21 @@ type ModuleVisibility = {
   clientTasks: boolean;
   attachments: boolean;
 };
+
+type TextFormattingKey =
+  | "completedThisMonth"
+  | "nextMonthPlan"
+  | "clientTasks"
+  | "studentBasicInfo"
+  | "materialCollectionStatus";
+
+type TextFormatting = {
+  color: string;
+  bold: boolean;
+  underline: boolean;
+};
+
+type TextFormattingMap = Record<TextFormattingKey, TextFormatting>;
 
 type ReportModuleKey =
   | "stageFocus"
@@ -219,6 +231,7 @@ const applicationProgressFields = [
   "申请提交情况",
   "提交情况",
   "申请状态",
+  "阶段性反馈",
   "本月完成情况",
 ];
 
@@ -226,8 +239,6 @@ const defaultModules: ModuleVisibility = {
   studentName: true,
   season: true,
   applicationType: true,
-  templateName: true,
-  styleLabel: true,
   stageFocus: true,
   summary: true,
   timeline: true,
@@ -251,9 +262,9 @@ const moduleLabels: Array<{
   { key: "timeline", label: "展示申请时间轴" },
   { key: "basicInfo", label: "展示基础信息" },
   { key: "materialCollection", label: "展示材料收集" },
-  { key: "completedThisMonth", label: "展示本次阶段性进度" },
+  { key: "completedThisMonth", label: "展示阶段性反馈" },
   { key: "nextMonthPlan", label: "展示下一阶段计划" },
-  { key: "clientTasks", label: "展示学生/家庭待办" },
+  { key: "clientTasks", label: "展示需要学生/家庭配合" },
   { key: "attachments", label: "展示附件列表" },
 ];
 
@@ -275,9 +286,9 @@ const reportModuleLabels: Record<ReportModuleKey, string> = {
   timeline: "申请时间轴",
   basicInfo: "基础信息",
   materialCollection: "材料收集",
-  completedThisMonth: "本次阶段性进度",
+  completedThisMonth: "阶段性反馈",
   nextMonthPlan: "下一阶段计划",
-  clientTasks: "学生/家庭待办",
+  clientTasks: "需要学生/家庭配合",
   attachments: "附件",
 };
 
@@ -287,9 +298,9 @@ const reportModuleToggleLabels: Record<ReportModuleKey, string> = {
   timeline: "展示申请时间轴",
   basicInfo: "展示基础信息",
   materialCollection: "展示材料收集",
-  completedThisMonth: "展示本次阶段性进度",
+  completedThisMonth: "展示阶段性反馈",
   nextMonthPlan: "展示下一阶段计划",
-  clientTasks: "展示学生/家庭待办",
+  clientTasks: "展示需要学生/家庭配合",
   attachments: "展示附件列表",
 };
 
@@ -314,8 +325,6 @@ function buildDefaultContent(
     title: "测试学生甲申请季阶段性反馈报告",
     studentName: "测试学生甲",
     season: "2027秋",
-    templateName: config.templateName,
-    styleLabel: config.theme.themeName,
     departmentLabel: departmentLabelByApplicationType[applicationType],
     completedThisMonth: config.defaultContent.completedThisMonth,
     nextMonthPlan: config.defaultContent.nextMonthPlan,
@@ -326,6 +335,113 @@ function buildDefaultContent(
     materialCollectionStatus: "",
     additionalRecognizedFields: "",
   };
+}
+
+function buildDefaultTextFormatting(color: string): TextFormattingMap {
+  const createFormatting = (): TextFormatting => ({
+    color,
+    bold: false,
+    underline: false,
+  });
+
+  return {
+    completedThisMonth: createFormatting(),
+    nextMonthPlan: createFormatting(),
+    clientTasks: createFormatting(),
+    studentBasicInfo: createFormatting(),
+    materialCollectionStatus: createFormatting(),
+  };
+}
+
+type ReportTextEditorProps = {
+  id: string;
+  label: string;
+  value: string;
+  formatting: TextFormatting;
+  className?: string;
+  minHeightClass?: string;
+  placeholder?: string;
+  onValueChange: (value: string) => void;
+  onFormattingChange: (formatting: TextFormatting) => void;
+};
+
+function ReportTextEditor({
+  id,
+  label,
+  value,
+  formatting,
+  className = "",
+  minHeightClass = "min-h-28",
+  placeholder,
+  onValueChange,
+  onFormattingChange,
+}: ReportTextEditorProps) {
+  return (
+    <section className={`grid gap-2 ${className}`}>
+      <div className="flex flex-wrap items-center justify-between gap-2">
+        <label className="text-sm font-medium" htmlFor={id}>
+          {label}
+        </label>
+        <div className="flex items-center gap-1 rounded-lg border border-slate-200 bg-slate-50 p-1">
+          <label
+            className="inline-flex h-8 w-8 cursor-pointer items-center justify-center rounded-md bg-white shadow-sm"
+            title={`${label}文字颜色`}
+          >
+            <Palette className="h-4 w-4" aria-hidden />
+            <input
+              aria-label={`${label}文字颜色`}
+              className="absolute h-px w-px opacity-0"
+              type="color"
+              value={formatting.color}
+              onChange={(event) =>
+                onFormattingChange({ ...formatting, color: event.target.value })
+              }
+            />
+          </label>
+          <button
+            aria-label={`${label}加粗`}
+            aria-pressed={formatting.bold}
+            className="inline-flex h-8 w-8 items-center justify-center rounded-md bg-white shadow-sm aria-pressed:bg-slate-900 aria-pressed:text-white"
+            title="加粗"
+            type="button"
+            onClick={() =>
+              onFormattingChange({ ...formatting, bold: !formatting.bold })
+            }
+          >
+            <BoldIcon className="h-4 w-4" aria-hidden />
+          </button>
+          <button
+            aria-label={`${label}下划线`}
+            aria-pressed={formatting.underline}
+            className="inline-flex h-8 w-8 items-center justify-center rounded-md bg-white shadow-sm aria-pressed:bg-slate-900 aria-pressed:text-white"
+            title="下划线"
+            type="button"
+            onClick={() =>
+              onFormattingChange({
+                ...formatting,
+                underline: !formatting.underline,
+              })
+            }
+          >
+            <UnderlineIcon className="h-4 w-4" aria-hidden />
+          </button>
+        </div>
+      </div>
+      <textarea
+        aria-label={label}
+        className={`${minHeightClass} rounded-lg border border-slate-300 px-3 py-2 text-sm leading-6`}
+        id={id}
+        placeholder={placeholder}
+        style={{
+          color: formatting.color,
+          fontWeight: formatting.bold ? 700 : 400,
+          textDecoration: formatting.underline ? "underline" : "none",
+        }}
+        value={value}
+        onChange={(event) => onValueChange(event.target.value)}
+      />
+    </section>
+  );
 }
 
 function buildDefaultTimeline(
@@ -341,41 +457,34 @@ function buildDefaultTimeline(
   }));
 }
 
-function firstMatchingLine(lines: string[], patterns: RegExp[]) {
-  return (
-    lines.find((line) => patterns.some((pattern) => pattern.test(line))) ?? ""
-  );
-}
-
 function extractFeedbackFromCommunication(rawText: string, fallback: EditableReportContent) {
   const lines = rawText
     .split(/\r?\n/)
     .map((line) => line.trim())
     .filter(Boolean);
+  const matchingLines = (patterns: RegExp[]) =>
+    lines.filter((line) => patterns.some((pattern) => pattern.test(line)));
+  const completedLines = matchingLines([/完成|已推进|已确认|已提交|梳理|整理/]);
+  const nextPlanLines = matchingLines([/下月|下周|下一步|计划|继续推进/]);
+  const focusLines = matchingLines([/重点|关注|风险|提醒|节点|阶段/]);
+  const clientTaskLines = matchingLines([
+    /(^请|需要|待学生|待家长|补充|上传|提供|证明)/,
+  ]);
   const completedThisMonth =
-    firstMatchingLine(lines, [/完成|已推进|已确认|已提交|梳理|整理/]) ||
+    completedLines.join("\n") ||
     fallback.completedThisMonth;
   const nextMonthPlan =
-    firstMatchingLine(lines, [/下月|下周|下一步|计划|继续推进/]) ||
+    nextPlanLines.join("\n") ||
     fallback.nextMonthPlan;
   const nextStageFocus =
-    firstMatchingLine(lines, [/重点|关注|风险|提醒|节点|阶段/]) ||
+    focusLines.join("\n") ||
     fallback.nextStageFocus;
 
   return {
     completedThisMonth,
     nextMonthPlan,
     nextStageFocus,
-    clientTasks:
-      lines
-        .filter(
-          (line) =>
-            line !== completedThisMonth &&
-            line !== nextMonthPlan &&
-            line !== nextStageFocus &&
-            /(^请|需要|待学生|待家长|补充|上传|提供|证明)/.test(line),
-        )
-        .join("\n") || fallback.clientTasks,
+    clientTasks: clientTaskLines.join("\n") || fallback.clientTasks,
   };
 }
 
@@ -719,6 +828,7 @@ const previousReportHeadings = [
   "材料收集情况",
   "申请截图识别",
   "截图识别结果",
+  "阶段性反馈",
   "本次阶段性进度",
   "本月完成情况",
   "下一阶段计划",
@@ -892,16 +1002,30 @@ function drawWrappedText(
   y: number,
   maxWidth: number,
   lineHeight: number,
+  underline = false,
 ) {
   const paragraphs = text.split(/\n/);
   let currentY = y;
+
+  const drawLine = (line: string) => {
+    context.fillText(line, x, currentY);
+    if (underline) {
+      const lineWidth = context.measureText(line).width;
+      context.beginPath();
+      context.moveTo(x, currentY + 3);
+      context.lineTo(x + lineWidth, currentY + 3);
+      context.strokeStyle = context.fillStyle as string;
+      context.lineWidth = 1;
+      context.stroke();
+    }
+  };
 
   paragraphs.forEach((paragraph) => {
     let line = "";
     Array.from(paragraph).forEach((character) => {
       const nextLine = `${line}${character}`;
       if (context.measureText(nextLine).width > maxWidth && line) {
-        context.fillText(line, x, currentY);
+        drawLine(line);
         line = character;
         currentY += lineHeight;
       } else {
@@ -909,7 +1033,9 @@ function drawWrappedText(
       }
     });
     if (line) {
-      context.fillText(line, x, currentY);
+      drawLine(line);
+      currentY += lineHeight;
+    } else {
       currentY += lineHeight;
     }
   });
@@ -1004,13 +1130,18 @@ function getCurrentTimelineItem(timelineItems: TimelineItem[]) {
 
 function buildActionItems(text: string) {
   const lines = splitReportLines(text);
-  return (lines.length > 0 ? lines : [emptySectionPlaceholder]).slice(0, 3);
+  return lines.length > 0 ? lines : [emptySectionPlaceholder];
 }
 
 function summarizeAdvisorFeedback(text: string) {
-  const normalized = text.replace(/\s+/g, " ").trim();
+  const normalized = text
+    .replace(/\r/g, "")
+    .split("\n")
+    .map((line) => line.trim())
+    .join("\n")
+    .trim();
   if (!normalized) return emptySectionPlaceholder;
-  return normalized.length > 150 ? `${normalized.slice(0, 150)}...` : normalized;
+  return normalized;
 }
 
 export function MonthlyReportWorkspace() {
@@ -1022,6 +1153,11 @@ export function MonthlyReportWorkspace() {
   );
   const [theme, setTheme] = useState(
     () => getMonthlyReportApplicationConfig(initialApplicationType).theme,
+  );
+  const [textFormatting, setTextFormatting] = useState(() =>
+    buildDefaultTextFormatting(
+      getMonthlyReportApplicationConfig(initialApplicationType).theme.textColor,
+    ),
   );
   const [communicationText, setCommunicationText] = useState("");
   const [screenshotRecognitionText, setScreenshotRecognitionText] = useState("");
@@ -1073,6 +1209,29 @@ export function MonthlyReportWorkspace() {
     setIsDirty(true);
   }
 
+  function updateTextFormatting(
+    field: TextFormattingKey,
+    formatting: TextFormatting,
+  ) {
+    setTextFormatting((current) => ({ ...current, [field]: formatting }));
+    setIsDirty(true);
+  }
+
+  function getTextFormattingStyle(field: TextFormattingKey) {
+    const formatting = textFormatting[field];
+    return {
+      color: formatting.color,
+      fontWeight: formatting.bold ? 700 : 400,
+      textDecoration: formatting.underline ? "underline" : "none",
+      textUnderlineOffset: "2px",
+    };
+  }
+
+  function getTextFormattingCss(field: TextFormattingKey) {
+    const formatting = textFormatting[field];
+    return `color:${formatting.color};font-weight:${formatting.bold ? 700 : 400};text-decoration:${formatting.underline ? "underline" : "none"};text-underline-offset:2px`;
+  }
+
   function applyApplicationType(
     nextApplicationType: MonthlyReportApplicationType,
     resetContent: boolean,
@@ -1083,6 +1242,7 @@ export function MonthlyReportWorkspace() {
     setTimelineItems(buildDefaultTimeline(nextApplicationType));
     if (resetContent) {
       setContent(buildDefaultContent(nextApplicationType));
+      setTextFormatting(buildDefaultTextFormatting(nextConfig.theme.textColor));
       setCommunicationText("");
       setScreenshotRecognitionText("");
       setRecognizedFields([]);
@@ -1091,8 +1251,6 @@ export function MonthlyReportWorkspace() {
     } else {
       setContent((current) => ({
         ...current,
-        templateName: nextConfig.templateName,
-        styleLabel: nextConfig.theme.themeName,
         departmentLabel: departmentLabelByApplicationType[nextApplicationType],
       }));
     }
@@ -1428,6 +1586,7 @@ export function MonthlyReportWorkspace() {
         extractReportSection(rawText, "申请截图识别") ||
         extractReportSection(rawText, "截图识别结果"),
       completedThisMonth:
+        extractReportSection(rawText, "阶段性反馈") ||
         extractReportSection(rawText, "本次阶段性进度") ||
         extractReportSection(rawText, "本月完成情况"),
       nextMonthPlan:
@@ -1585,7 +1744,7 @@ export function MonthlyReportWorkspace() {
         ? studentInfoRows
             .map(
               (row) =>
-                `<tr><th>${escapeHtml(row.label)}</th><td>${escapeHtml(row.value)}</td></tr>`,
+                `<tr><th>${escapeHtml(row.label)}</th><td style="${getTextFormattingCss("studentBasicInfo")}">${escapeHtml(row.value)}</td></tr>`,
             )
             .join("")
         : `<tr><th>基础信息</th><td>${emptySectionPlaceholder}</td></tr>`;
@@ -1594,7 +1753,7 @@ export function MonthlyReportWorkspace() {
         ? materialRows
             .map((row) => {
               const style = statusStyles[row.status];
-              return `<tr>
+              return `<tr style="${getTextFormattingCss("materialCollectionStatus")}">
                 <td>${escapeHtml(row.item)}</td>
                 <td><span class="status-pill" style="background:${style.bg};color:${style.color}">${escapeHtml(row.statusLabel)}</span></td>
                 <td>${escapeHtml(row.remark)}</td>
@@ -1627,13 +1786,13 @@ export function MonthlyReportWorkspace() {
           return `<section class="${sectionClass(key)}"><h2 class="section-title">材料收集</h2><table><thead><tr><th>材料项目</th><th>状态</th><th>备注</th></tr></thead><tbody>${materialRowsHtml}</tbody></table></section>`;
         }
         if (key === "completedThisMonth") {
-          return `<section class="${sectionClass(key)}"><h2 class="section-title">顾问阶段性反馈 / 本次阶段性进度</h2><p>${escapeHtml(content.completedThisMonth)}</p></section>`;
+          return `<section class="${sectionClass(key)}"><h2 class="section-title">阶段性反馈</h2><p style="${getTextFormattingCss("completedThisMonth")}">${escapeHtml(content.completedThisMonth)}</p></section>`;
         }
         if (key === "nextMonthPlan") {
-          return `<section class="${sectionClass(key)}"><h2 class="section-title">本阶段后续动作 / 下一阶段计划</h2><ul>${nextActionsHtml}</ul></section>`;
+          return `<section class="${sectionClass(key)}"><h2 class="section-title">下一阶段计划</h2><ul style="${getTextFormattingCss("nextMonthPlan")}">${nextActionsHtml}</ul></section>`;
         }
         if (key === "clientTasks") {
-          return `<section class="${sectionClass(key)}"><h2 class="section-title">学生/家庭待办 / 需要学生/家庭配合</h2><p>${escapeHtml(content.clientTasks)}</p></section>`;
+          return `<section class="${sectionClass(key)}"><h2 class="section-title">需要学生/家庭配合</h2><p style="${getTextFormattingCss("clientTasks")}">${escapeHtml(content.clientTasks)}</p></section>`;
         }
         if (key === "attachments" && attachmentNames) {
           return `<section class="${sectionClass(key)} attachments"><h2 class="section-title">附件</h2><p>${attachmentHtml}</p></section>`;
@@ -1650,7 +1809,7 @@ export function MonthlyReportWorkspace() {
 <style>
 @page{size:A4;margin:0}
 body{font-family:Arial,"PingFang SC","Microsoft YaHei",sans-serif;margin:0;color:${theme.textColor};background:${theme.backgroundColor}}
-.report{width:210mm;min-height:297mm;margin:auto;background:${theme.cardColor};padding:12mm;box-sizing:border-box}
+.report{width:210mm;min-height:297mm;margin:auto;background:${theme.cardColor};padding:12mm;box-sizing:border-box;border-top:2px solid ${theme.primaryColor}}
 .header{display:flex;align-items:center;justify-content:space-between;gap:18px}
 .brand{display:flex;align-items:center;gap:12px;color:${theme.mutedTextColor};font-size:12px}
 .logo{width:112px;height:auto}
@@ -1660,7 +1819,7 @@ body{font-family:Arial,"PingFang SC","Microsoft YaHei",sans-serif;margin:0;color
 .eyebrow{font-size:11px;letter-spacing:.08em;text-transform:uppercase;opacity:.82}
 h1{margin:8px 0 10px;font-size:28px;line-height:1.2}
 .meta{display:flex;flex-wrap:wrap;gap:8px;font-size:12px;opacity:.9}
-.section-card{margin-top:12px;border:1px solid #e2e8f0;border-radius:16px;background:white;padding:14px;box-shadow:0 8px 24px rgba(15,23,42,.06)}
+.section-card{margin-top:12px;border:1px solid #e2e8f0;border-radius:16px;background:white;padding:14px;box-shadow:0 2px 8px rgba(15,23,42,.04)}
 .section-card.highlighted{background:${theme.secondarySoftColor};border-color:${theme.accentColor};box-shadow:0 12px 28px rgba(15,23,42,.10)}
 .focus-grid{display:grid;grid-template-columns:1fr 1fr;gap:12px}
 .focus-grid h3{margin:0 0 6px;color:${theme.titleColor};font-size:13px}
@@ -1690,7 +1849,7 @@ th{width:36%;color:${theme.mutedTextColor};font-weight:600}
 <main class="report">
 <header class="header">
 <div class="brand"><img class="logo" src="${companyLogoSrc}" alt="新东方" /><span>${escapeHtml(content.departmentLabel)}</span></div>
-<div><span class="badge">${escapeHtml(applicationType)}</span> <span class="badge accent">${escapeHtml(content.season)}</span></div>
+<div><span class="badge accent">${escapeHtml(content.season)}</span> <span class="badge">${escapeHtml(applicationType)}</span></div>
 </header>
 <section class="hero">
 <div>
@@ -1701,7 +1860,6 @@ ${modules.studentName ? `<span>学生姓名：${escapeHtml(content.studentName)}
 ${modules.season ? `<span>申请季度：${escapeHtml(content.season)}</span>` : ""}
 ${modules.applicationType ? `<span>申请类型：${escapeHtml(applicationType)}</span>` : ""}
 <span>报告日期：${exportDate}</span>
-<span>${escapeHtml(content.templateName)}</span>
 </div>
 </div>
 </section>
@@ -1782,70 +1940,24 @@ ${renderedReportModules}
     const contentX = 110;
     const contentWidth = canvas.width - 220;
 
-    context.fillStyle = theme.backgroundColor;
-    context.fillRect(0, 0, canvas.width, canvas.height);
-    context.fillStyle = theme.cardColor;
-    context.fillRect(pageX, pageY, pageWidth, canvas.height - 140);
-
-    await new Promise<void>((resolve) => {
-      const logo = new Image();
-      logo.onload = () => {
-        context.drawImage(logo, contentX, 102, 170, 68);
-        resolve();
-      };
-      logo.onerror = () => resolve();
-      logo.src = companyLogoSrc;
-    });
-
-    context.fillStyle = theme.textColor;
-    context.font = '20px Arial, "PingFang SC", "Microsoft YaHei", sans-serif';
-    context.fillText(content.departmentLabel, 300, 142);
-
-    context.textAlign = "right";
-    context.fillStyle = theme.primaryColor;
-    context.font = 'bold 20px Arial, "PingFang SC", "Microsoft YaHei", sans-serif';
-    context.fillText(applicationType, 1130, 126);
-    context.fillStyle = theme.accentColor;
-    context.fillText(content.season, 1130, 158);
-    context.textAlign = "left";
-
-    const heroGradient = context.createLinearGradient(
-      contentX,
-      heroY,
-      contentX + contentWidth,
-      heroY + heroHeight,
-    );
-    heroGradient.addColorStop(0, theme.primaryDarkColor);
-    heroGradient.addColorStop(0.68, theme.primaryColor);
-    heroGradient.addColorStop(1, theme.accentColor);
-    context.fillStyle = heroGradient;
-    context.fillRect(contentX, heroY, contentWidth, heroHeight);
-
-    context.fillStyle = "rgba(255,255,255,0.82)";
-    context.font = 'bold 18px Arial, "PingFang SC", "Microsoft YaHei", sans-serif';
-    context.fillText("Application Progress Report", contentX + 32, heroY + 46);
-    context.fillStyle = "#ffffff";
-    context.font = 'bold 42px Arial, "PingFang SC", "Microsoft YaHei", sans-serif';
-    context.fillText(reportTitle, contentX + 32, heroY + 102);
-    context.font = '22px Arial, "PingFang SC", "Microsoft YaHei", sans-serif';
-    const metaText = [
-      modules.studentName ? `学生姓名：${content.studentName}` : "",
-      modules.season ? `申请季度：${content.season}` : "",
-      modules.applicationType ? `申请类型：${applicationType}` : "",
-      content.templateName,
-    ]
-      .filter(Boolean)
-      .join("   ");
-    context.fillText(metaText, contentX + 32, heroY + 148);
-
-    let y = initialContentY;
-    function roundedRect(x: number, rectY: number, width: number, height: number, radius: number) {
+    function roundedRect(
+      x: number,
+      rectY: number,
+      width: number,
+      height: number,
+      radius: number,
+    ) {
       canvasContext.beginPath();
       canvasContext.moveTo(x + radius, rectY);
       canvasContext.lineTo(x + width - radius, rectY);
       canvasContext.quadraticCurveTo(x + width, rectY, x + width, rectY + radius);
       canvasContext.lineTo(x + width, rectY + height - radius);
-      canvasContext.quadraticCurveTo(x + width, rectY + height, x + width - radius, rectY + height);
+      canvasContext.quadraticCurveTo(
+        x + width,
+        rectY + height,
+        x + width - radius,
+        rectY + height,
+      );
       canvasContext.lineTo(x + radius, rectY + height);
       canvasContext.quadraticCurveTo(x, rectY + height, x, rectY + height - radius);
       canvasContext.lineTo(x, rectY + radius);
@@ -1870,6 +1982,103 @@ ${renderedReportModules}
       canvasContext.stroke();
     }
 
+    function applyCanvasTextFormatting(field: TextFormattingKey, size: number) {
+      const formatting = textFormatting[field];
+      canvasContext.fillStyle = formatting.color;
+      canvasContext.font = `${formatting.bold ? "bold " : ""}${size}px Arial, "PingFang SC", "Microsoft YaHei", sans-serif`;
+      return formatting.underline;
+    }
+
+    context.fillStyle = theme.backgroundColor;
+    context.fillRect(0, 0, canvas.width, canvas.height);
+    context.fillStyle = theme.cardColor;
+    context.fillRect(pageX, pageY, pageWidth, canvas.height - 140);
+
+    await new Promise<void>((resolve) => {
+      const logo = new Image();
+      logo.onload = () => {
+        context.drawImage(logo, contentX, 102, 170, 68);
+        resolve();
+      };
+      logo.onerror = () => resolve();
+      logo.src = companyLogoSrc;
+    });
+
+    context.fillStyle = theme.textColor;
+    context.font = '20px Arial, "PingFang SC", "Microsoft YaHei", sans-serif';
+    context.fillText(content.departmentLabel, 300, 142);
+
+    context.font = 'bold 16px Arial, "PingFang SC", "Microsoft YaHei", sans-serif';
+    const applicationBadgeWidth = Math.max(
+      118,
+      context.measureText(applicationType).width + 34,
+    );
+    const seasonBadgeWidth = Math.max(88, context.measureText(content.season).width + 34);
+    const applicationBadgeX = contentX + contentWidth - applicationBadgeWidth;
+    const seasonBadgeX = applicationBadgeX - seasonBadgeWidth - 12;
+    drawRoundedBox(
+      seasonBadgeX,
+      112,
+      seasonBadgeWidth,
+      42,
+      theme.secondarySoftColor,
+      theme.secondarySoftColor,
+      21,
+    );
+    context.fillStyle = theme.accentColor;
+    context.textAlign = "center";
+    context.fillText(content.season, seasonBadgeX + seasonBadgeWidth / 2, 139);
+    drawRoundedBox(
+      applicationBadgeX,
+      112,
+      applicationBadgeWidth,
+      42,
+      theme.primarySoftColor,
+      theme.primarySoftColor,
+      21,
+    );
+    context.fillStyle = theme.primaryColor;
+    context.fillText(
+      applicationType,
+      applicationBadgeX + applicationBadgeWidth / 2,
+      139,
+    );
+    context.textAlign = "left";
+
+    const heroGradient = context.createLinearGradient(
+      contentX,
+      heroY,
+      contentX + contentWidth,
+      heroY + heroHeight,
+    );
+    heroGradient.addColorStop(0, theme.primaryDarkColor);
+    heroGradient.addColorStop(0.68, theme.primaryColor);
+    heroGradient.addColorStop(1, theme.accentColor);
+    context.save();
+    roundedRect(contentX, heroY, contentWidth, heroHeight, 28);
+    context.clip();
+    context.fillStyle = heroGradient;
+    context.fillRect(contentX, heroY, contentWidth, heroHeight);
+    context.restore();
+
+    context.fillStyle = "rgba(255,255,255,0.82)";
+    context.font = 'bold 18px Arial, "PingFang SC", "Microsoft YaHei", sans-serif';
+    context.fillText("Application Progress Report", contentX + 32, heroY + 46);
+    context.fillStyle = "#ffffff";
+    context.font = 'bold 42px Arial, "PingFang SC", "Microsoft YaHei", sans-serif';
+    context.fillText(reportTitle, contentX + 32, heroY + 102);
+    context.font = '22px Arial, "PingFang SC", "Microsoft YaHei", sans-serif';
+    const metaText = [
+      modules.studentName ? `学生姓名：${content.studentName}` : "",
+      modules.season ? `申请季度：${content.season}` : "",
+      modules.applicationType ? `申请类型：${applicationType}` : "",
+      `报告日期：${exportDate}`,
+    ]
+      .filter(Boolean)
+      .join("   ");
+    context.fillText(metaText, contentX + 32, heroY + 148);
+
+    let y = initialContentY;
     function drawReportCard(
       key: ReportModuleKey,
       height: number,
@@ -2017,9 +2226,18 @@ ${renderedReportModules}
           rows.forEach((row, index) => {
             const rowY = cardY + 76 + index * 30;
             context.fillStyle = theme.mutedTextColor;
+            context.font = '17px Arial, "PingFang SC", "Microsoft YaHei", sans-serif';
             context.fillText(row.label, contentX + 18, rowY);
-            context.fillStyle = theme.textColor;
-            context.fillText(row.value, contentX + 190, rowY);
+            const underline = applyCanvasTextFormatting("studentBasicInfo", 17);
+            drawWrappedText(
+              context,
+              row.value,
+              contentX + 190,
+              rowY,
+              contentWidth - 208,
+              22,
+              underline,
+            );
           });
         });
       }
@@ -2047,15 +2265,35 @@ ${renderedReportModules}
           context.fillText("备注", contentX + 520, cardY + 70);
           rows.forEach((row, index) => {
             const rowY = cardY + 102 + index * 28;
-            context.fillStyle = theme.textColor;
-            context.font = '16px Arial, "PingFang SC", "Microsoft YaHei", sans-serif';
-            context.fillText(row.item, contentX + 18, rowY);
+            const underline = applyCanvasTextFormatting(
+              "materialCollectionStatus",
+              16,
+            );
+            drawWrappedText(
+              context,
+              row.item,
+              contentX + 18,
+              rowY,
+              320,
+              20,
+              underline,
+            );
             context.fillStyle = statusStyles[row.status].color;
             context.font = 'bold 15px Arial, "PingFang SC", "Microsoft YaHei", sans-serif';
             context.fillText(row.statusLabel, contentX + 360, rowY);
-            context.fillStyle = theme.textColor;
-            context.font = '15px Arial, "PingFang SC", "Microsoft YaHei", sans-serif';
-            drawWrappedText(context, row.remark, contentX + 520, rowY, contentWidth - 540, 20);
+            const remarkUnderline = applyCanvasTextFormatting(
+              "materialCollectionStatus",
+              15,
+            );
+            drawWrappedText(
+              context,
+              row.remark,
+              contentX + 520,
+              rowY,
+              contentWidth - 540,
+              20,
+              remarkUnderline,
+            );
           });
         });
       }
@@ -2064,10 +2302,17 @@ ${renderedReportModules}
         drawReportCard(key, estimateCardHeight(key), (cardY) => {
           context.fillStyle = theme.titleColor;
           context.font = 'bold 21px Arial, "PingFang SC", "Microsoft YaHei", sans-serif';
-          context.fillText("顾问阶段性反馈 / 本次阶段性进度", contentX + 18, cardY + 34);
-          context.fillStyle = theme.textColor;
-          context.font = '17px Arial, "PingFang SC", "Microsoft YaHei", sans-serif';
-          drawWrappedText(context, advisorFeedback, contentX + 18, cardY + 68, contentWidth - 36, 25);
+          context.fillText("阶段性反馈", contentX + 18, cardY + 34);
+          const underline = applyCanvasTextFormatting("completedThisMonth", 17);
+          drawWrappedText(
+            context,
+            advisorFeedback,
+            contentX + 18,
+            cardY + 68,
+            contentWidth - 36,
+            25,
+            underline,
+          );
         });
       }
 
@@ -2075,9 +2320,8 @@ ${renderedReportModules}
         drawReportCard(key, estimateCardHeight(key), (cardY) => {
           context.fillStyle = theme.titleColor;
           context.font = 'bold 21px Arial, "PingFang SC", "Microsoft YaHei", sans-serif';
-          context.fillText("本阶段后续动作 / 下一阶段计划", contentX + 18, cardY + 34);
-          context.fillStyle = theme.textColor;
-          context.font = '17px Arial, "PingFang SC", "Microsoft YaHei", sans-serif';
+          context.fillText("下一阶段计划", contentX + 18, cardY + 34);
+          const underline = applyCanvasTextFormatting("nextMonthPlan", 17);
           drawWrappedText(
             context,
             nextActionItems.map((item) => `• ${item}`).join("\n"),
@@ -2085,6 +2329,7 @@ ${renderedReportModules}
             cardY + 68,
             contentWidth - 36,
             25,
+            underline,
           );
         });
       }
@@ -2093,10 +2338,17 @@ ${renderedReportModules}
         drawReportCard(key, estimateCardHeight(key), (cardY) => {
           context.fillStyle = theme.titleColor;
           context.font = 'bold 21px Arial, "PingFang SC", "Microsoft YaHei", sans-serif';
-          context.fillText("学生/家庭待办 / 需要学生/家庭配合", contentX + 18, cardY + 34);
-          context.fillStyle = theme.textColor;
-          context.font = '17px Arial, "PingFang SC", "Microsoft YaHei", sans-serif';
-          drawWrappedText(context, content.clientTasks, contentX + 18, cardY + 68, contentWidth - 36, 25);
+          context.fillText("需要学生/家庭配合", contentX + 18, cardY + 34);
+          const underline = applyCanvasTextFormatting("clientTasks", 17);
+          drawWrappedText(
+            context,
+            content.clientTasks,
+            contentX + 18,
+            cardY + 68,
+            contentWidth - 36,
+            25,
+            underline,
+          );
         });
       }
 
@@ -2104,7 +2356,7 @@ ${renderedReportModules}
         drawReportCard(key, estimateCardHeight(key), (cardY) => {
           context.fillStyle = theme.titleColor;
           context.font = 'bold 21px Arial, "PingFang SC", "Microsoft YaHei", sans-serif';
-          context.fillText("附件展示 / 附件", contentX + 18, cardY + 34);
+          context.fillText("附件", contentX + 18, cardY + 34);
           context.fillStyle = theme.textColor;
           context.font = '17px Arial, "PingFang SC", "Microsoft YaHei", sans-serif';
           drawWrappedText(context, `本次报告附件：${attachmentNames}`, contentX + 18, cardY + 68, contentWidth - 36, 25);
@@ -2200,7 +2452,7 @@ ${renderedReportModules}
     if (key === "attachments" && !attachmentNames) return null;
 
     const sectionShellClass =
-      "mx-4 my-3 rounded-xl border border-slate-200 p-3 text-xs leading-5 shadow-sm";
+      "mx-4 my-3 rounded-2xl border border-slate-200 p-3 text-xs leading-5 shadow-[0_2px_8px_rgba(15,23,42,0.04)]";
     const sectionHeaderClass = "text-sm font-semibold";
     const sectionProps = {
       "data-highlighted": highlightedModules[key] ? "true" : "false",
@@ -2337,7 +2589,12 @@ ${renderedReportModules}
               ).map((row) => (
                 <div className="grid grid-cols-[112px_1fr] gap-2 py-2" key={row.label}>
                   <span style={{ color: theme.mutedTextColor }}>{row.label}</span>
-                  <span className="break-words font-medium">{row.value}</span>
+                  <span
+                    className="break-words"
+                    style={getTextFormattingStyle("studentBasicInfo")}
+                  >
+                    {row.value}
+                  </span>
                 </div>
               ))}
             </div>
@@ -2379,14 +2636,24 @@ ${renderedReportModules}
                     <span className="sr-only">
                       {row.item}：{row.remark}
                     </span>
-                    <span className="break-words font-medium">{row.item}</span>
+                    <span
+                      className="break-words"
+                      style={getTextFormattingStyle("materialCollectionStatus")}
+                    >
+                      {row.item}
+                    </span>
                     <span
                       className="inline-flex h-fit rounded-full px-2 py-1 text-[10px] font-semibold"
                       style={{ backgroundColor: style.bg, color: style.color }}
                     >
                       {row.statusLabel}
                     </span>
-                    <span className="break-words text-slate-600">{row.remark}</span>
+                    <span
+                      className="break-words"
+                      style={getTextFormattingStyle("materialCollectionStatus")}
+                    >
+                      {row.remark}
+                    </span>
                   </div>
                 );
               })}
@@ -2401,9 +2668,14 @@ ${renderedReportModules}
         <section key={key} {...sectionProps}>
           <div data-testid="report-section">
             <h3 className={sectionHeaderClass} style={{ color: theme.titleColor }}>
-              顾问阶段性反馈 / 本次阶段性进度
+              阶段性反馈
             </h3>
-            <p className="mt-2 whitespace-pre-line">{advisorFeedback}</p>
+            <p
+              className="mt-2 whitespace-pre-line"
+              style={getTextFormattingStyle("completedThisMonth")}
+            >
+              {advisorFeedback}
+            </p>
           </div>
         </section>
       );
@@ -2414,9 +2686,12 @@ ${renderedReportModules}
         <section key={key} {...sectionProps}>
           <div data-testid="report-section">
             <h3 className={sectionHeaderClass} style={{ color: theme.titleColor }}>
-              本阶段后续动作 / 下一阶段计划
+              下一阶段计划
             </h3>
-            <ul className="mt-2 list-disc space-y-1 pl-4">
+            <ul
+              className="mt-2 list-disc space-y-1 pl-4"
+              style={getTextFormattingStyle("nextMonthPlan")}
+            >
               {nextActionItems.map((item) => (
                 <li key={item}>{item}</li>
               ))}
@@ -2431,9 +2706,14 @@ ${renderedReportModules}
         <section key={key} {...sectionProps}>
           <div data-testid="report-section">
             <h3 className={sectionHeaderClass} style={{ color: theme.titleColor }}>
-              学生/家庭待办 / 需要学生/家庭配合
+              需要学生/家庭配合
             </h3>
-            <p className="mt-1 whitespace-pre-line">{content.clientTasks}</p>
+            <p
+              className="mt-1 whitespace-pre-line"
+              style={getTextFormattingStyle("clientTasks")}
+            >
+              {content.clientTasks}
+            </p>
           </div>
         </section>
       );
@@ -2443,7 +2723,7 @@ ${renderedReportModules}
       <section key={key} {...sectionProps}>
         <div data-testid="report-section">
           <h3 className={sectionHeaderClass} style={{ color: theme.titleColor }}>
-            附件展示 / 附件
+            附件
           </h3>
           <p className="mt-1">本次报告附件：{attachmentNames}</p>
         </div>
@@ -2506,7 +2786,7 @@ ${renderedReportModules}
           </h1>
         </div>
         <div className="rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm shadow-sm">
-          当前模板：{content.templateName}
+          当前申请类型：{applicationType}
         </div>
       </div>
 
@@ -2559,24 +2839,6 @@ ${renderedReportModules}
               </select>
             </label>
 
-            <div className="grid gap-3 sm:grid-cols-2 2xl:grid-cols-1">
-              <label className="grid gap-1 text-sm font-medium">
-                报告模板名称
-                <input
-                  className="rounded-lg border border-slate-300 px-3 py-2 text-sm"
-                  value={content.templateName}
-                  onChange={(event) => updateContent("templateName", event.target.value)}
-                />
-              </label>
-              <label className="grid gap-1 text-sm font-medium">
-                报告风格标签
-                <input
-                  className="rounded-lg border border-slate-300 px-3 py-2 text-sm"
-                  value={content.styleLabel}
-                  onChange={(event) => updateContent("styleLabel", event.target.value)}
-                />
-              </label>
-            </div>
             <label className="grid gap-1 text-sm font-medium">
               部门标签
               <input
@@ -2618,7 +2880,7 @@ ${renderedReportModules}
               <div className="flex items-center justify-between gap-3">
                 <h2 className="flex items-center gap-2 text-base font-semibold">
                   <Palette className="h-4 w-4" aria-hidden />
-                  申请类型与报告模板
+                  申请类型与主题配色
                 </h2>
                 <span className="text-xs text-slate-500">
                   {APPLICATION_TYPE_OPTIONS.length} 套
@@ -2650,13 +2912,8 @@ ${renderedReportModules}
                       onClick={() => handleApplicationTypeChange(option)}
                     >
                       <span className="flex items-start justify-between gap-3">
-                        <span>
-                          <span className="block font-semibold text-slate-950">
-                            {option}
-                          </span>
-                          <span className="mt-1 block text-xs text-slate-500">
-                            {optionConfig.templateName}
-                          </span>
+                        <span className="block font-semibold text-slate-950">
+                          {option}
                         </span>
                         {isSelected ? (
                           <span
@@ -2667,8 +2924,7 @@ ${renderedReportModules}
                           </span>
                         ) : null}
                       </span>
-                      <span className="flex items-center justify-between gap-3 text-xs text-slate-500">
-                        <span>{optionConfig.theme.themeName}</span>
+                      <span className="flex items-center justify-end gap-3 text-xs text-slate-500">
                         <span className="flex items-center gap-1" aria-hidden>
                           {[
                             optionConfig.theme.primaryColor,
@@ -2693,7 +2949,7 @@ ${renderedReportModules}
               粘贴沟通内容
               <textarea
                 className="min-h-44 rounded-lg border border-slate-300 px-3 py-2 text-sm leading-6"
-                placeholder="粘贴微信、邮件、会议纪要或顾问跟进记录，系统会提取本次阶段性进度、下一阶段计划和待办。"
+                placeholder="粘贴微信、邮件、会议纪要或顾问跟进记录，系统会按分行内容提取阶段性反馈、下一阶段计划和配合事项。"
                 value={communicationText}
                 onChange={(event) => setCommunicationText(event.target.value)}
               />
@@ -2849,32 +3105,39 @@ ${renderedReportModules}
             </div>
 
             <div className="mt-4 grid gap-4 lg:grid-cols-2">
-              <label className="grid gap-1 text-sm font-medium">
-                本次阶段性进度
-                <textarea
-                  className="min-h-28 rounded-lg border border-slate-300 px-3 py-2 text-sm leading-6"
-                  value={content.completedThisMonth}
-                  onChange={(event) =>
-                    updateContent("completedThisMonth", event.target.value)
-                  }
-                />
-              </label>
-              <label className="grid gap-1 text-sm font-medium">
-                下一阶段计划
-                <textarea
-                  className="min-h-28 rounded-lg border border-slate-300 px-3 py-2 text-sm leading-6"
-                  value={content.nextMonthPlan}
-                  onChange={(event) => updateContent("nextMonthPlan", event.target.value)}
-                />
-              </label>
-              <label className="grid gap-1 text-sm font-medium">
-                需要学生/家庭配合
-                <textarea
-                  className="min-h-24 rounded-lg border border-slate-300 px-3 py-2 text-sm leading-6"
-                  value={content.clientTasks}
-                  onChange={(event) => updateContent("clientTasks", event.target.value)}
-                />
-              </label>
+              <ReportTextEditor
+                formatting={textFormatting.completedThisMonth}
+                id="completed-this-month"
+                label="阶段性反馈"
+                value={content.completedThisMonth}
+                onFormattingChange={(formatting) =>
+                  updateTextFormatting("completedThisMonth", formatting)
+                }
+                onValueChange={(value) =>
+                  updateContent("completedThisMonth", value)
+                }
+              />
+              <ReportTextEditor
+                formatting={textFormatting.nextMonthPlan}
+                id="next-month-plan"
+                label="下一阶段计划"
+                value={content.nextMonthPlan}
+                onFormattingChange={(formatting) =>
+                  updateTextFormatting("nextMonthPlan", formatting)
+                }
+                onValueChange={(value) => updateContent("nextMonthPlan", value)}
+              />
+              <ReportTextEditor
+                formatting={textFormatting.clientTasks}
+                id="client-tasks"
+                label="需要学生/家庭配合"
+                minHeightClass="min-h-24"
+                value={content.clientTasks}
+                onFormattingChange={(formatting) =>
+                  updateTextFormatting("clientTasks", formatting)
+                }
+                onValueChange={(value) => updateContent("clientTasks", value)}
+              />
               <section className="grid gap-2 rounded-lg border border-slate-200 bg-slate-50 p-3 lg:col-span-2">
                 <div className="flex items-center justify-between gap-3">
                   <h3 className="text-sm font-semibold">识别字段筛选</h3>
@@ -2912,30 +3175,34 @@ ${renderedReportModules}
                   </p>
                 )}
               </section>
-              <label className="grid gap-1 text-sm font-medium lg:col-span-2">
-                基础信息
-                <textarea
-                  aria-label="基础信息"
-                  className="min-h-24 rounded-lg border border-slate-300 px-3 py-2 text-sm leading-6"
-                  placeholder="就读年级、就读学校、国籍、生日、语言成绩、标化考试、AP、GPA 等信息会显示在这里。"
-                  value={content.studentBasicInfo}
-                  onChange={(event) =>
-                    updateContent("studentBasicInfo", event.target.value)
-                  }
-                />
-              </label>
-              <label className="grid gap-1 text-sm font-medium lg:col-span-2">
-                材料收集
-                <textarea
-                  aria-label="材料收集"
-                  className="min-h-24 rounded-lg border border-slate-300 px-3 py-2 text-sm leading-6"
-                  placeholder="简历信息表、文书信息表、推荐人信息、成绩单、护照、签证页、存款证明等状态会显示在这里。"
-                  value={content.materialCollectionStatus}
-                  onChange={(event) =>
-                    updateContent("materialCollectionStatus", event.target.value)
-                  }
-                />
-              </label>
+              <ReportTextEditor
+                className="lg:col-span-2"
+                formatting={textFormatting.studentBasicInfo}
+                id="student-basic-info"
+                label="基础信息"
+                minHeightClass="min-h-24"
+                placeholder="就读年级、就读学校、国籍、生日、语言成绩、标化考试、AP、GPA 等信息会显示在这里。"
+                value={content.studentBasicInfo}
+                onFormattingChange={(formatting) =>
+                  updateTextFormatting("studentBasicInfo", formatting)
+                }
+                onValueChange={(value) => updateContent("studentBasicInfo", value)}
+              />
+              <ReportTextEditor
+                className="lg:col-span-2"
+                formatting={textFormatting.materialCollectionStatus}
+                id="material-collection-status"
+                label="材料收集"
+                minHeightClass="min-h-24"
+                placeholder="简历信息表、文书信息表、推荐人信息、成绩单、护照、签证页、存款证明等状态会显示在这里。"
+                value={content.materialCollectionStatus}
+                onFormattingChange={(formatting) =>
+                  updateTextFormatting("materialCollectionStatus", formatting)
+                }
+                onValueChange={(value) =>
+                  updateContent("materialCollectionStatus", value)
+                }
+              />
             </div>
           </section>
 
@@ -3111,7 +3378,11 @@ ${renderedReportModules}
           data-testid="monthly-report-preview"
           style={previewStyle}
         >
-          <article className="overflow-hidden rounded-lg border border-slate-200 bg-white">
+          <article
+            className="overflow-hidden rounded-lg bg-white"
+            style={{ borderTop: `2px solid ${theme.primaryColor}` }}
+          >
+            <h2 className="sr-only">报告预览</h2>
             <header className="flex items-center justify-between gap-3 px-4 py-3">
               <div className="flex items-center gap-3">
                 <img
@@ -3119,17 +3390,22 @@ ${renderedReportModules}
                   className="h-7 w-auto max-w-28 object-contain"
                   src={companyLogoSrc}
                 />
-                <div>
-                  <h2 className="flex items-center gap-2 text-sm font-semibold">
-                    <Eye className="h-4 w-4" aria-hidden />
-                    报告预览
-                  </h2>
-                  <p className="mt-0.5 text-xs" style={{ color: theme.mutedTextColor }}>
-                    {content.departmentLabel}
-                  </p>
-                </div>
+                <p className="text-xs" style={{ color: theme.mutedTextColor }}>
+                  {content.departmentLabel}
+                </p>
               </div>
               <div className="flex flex-wrap justify-end gap-1.5 text-xs font-semibold">
+                {modules.season ? (
+                  <span
+                    className="rounded-full px-2.5 py-1"
+                    style={{
+                      backgroundColor: theme.secondarySoftColor,
+                      color: theme.accentColor,
+                    }}
+                  >
+                    {content.season}
+                  </span>
+                ) : null}
                 {modules.applicationType ? (
                   <span
                     className="rounded-full px-2.5 py-1"
@@ -3141,22 +3417,11 @@ ${renderedReportModules}
                     {applicationType}
                   </span>
                 ) : null}
-                {modules.season ? (
-                  <span
-                    className="rounded-full px-2.5 py-1"
-                    style={{
-                      backgroundColor: theme.secondarySoftColor,
-                      color: theme.accentColor,
-                    }}
-                  >
-                    申请季度：{content.season}
-                  </span>
-                ) : null}
               </div>
             </header>
 
             <section
-              className="grid gap-3 px-4 py-4 text-white"
+              className="mx-4 grid gap-3 rounded-2xl px-4 py-4 text-white"
               style={{ background: theme.gradient }}
             >
               <div>
@@ -3168,10 +3433,9 @@ ${renderedReportModules}
                 </h3>
                 <div className="mt-3 flex flex-wrap gap-2 text-xs text-white/90">
                   {modules.studentName ? <span>学生姓名：{content.studentName}</span> : null}
+                  {modules.season ? <span>申请季度：{content.season}</span> : null}
                   {modules.applicationType ? <span>申请类型：{applicationType}</span> : null}
                   <span>报告日期：{exportDate}</span>
-                  {modules.templateName ? <span>{content.templateName}</span> : null}
-                  {modules.styleLabel ? <span>{content.styleLabel}</span> : null}
                 </div>
               </div>
             </section>

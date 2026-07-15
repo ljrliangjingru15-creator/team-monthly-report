@@ -78,7 +78,7 @@ describe("monthly reports page", () => {
       screen.getByRole("heading", { name: "沟通反馈/月度反馈生成工作台" }),
     ).toBeInTheDocument();
     expect(screen.getByRole("heading", { name: "沟通内容输入" })).toBeInTheDocument();
-    expect(screen.getByRole("heading", { name: "申请类型与报告模板" })).toBeInTheDocument();
+    expect(screen.getByRole("heading", { name: "申请类型与主题配色" })).toBeInTheDocument();
     expect(screen.getByRole("heading", { name: "自动识别结果" })).toBeInTheDocument();
     expect(screen.getByRole("heading", { name: "模块选择" })).toBeInTheDocument();
     expect(screen.getByRole("heading", { name: "报告预览" })).toBeInTheDocument();
@@ -108,7 +108,7 @@ describe("monthly reports page", () => {
       "申请时间轴",
       "基础信息",
       "材料收集",
-      "本次阶段性进度",
+      "阶段性反馈",
       "下一阶段计划",
       "需要学生/家庭配合",
     ].forEach((sectionTitle) => {
@@ -138,8 +138,8 @@ describe("monthly reports page", () => {
     expect(preview).toHaveTextContent("材料项目");
     expect(preview).toHaveTextContent("状态");
     expect(preview).toHaveTextContent("备注");
-    expect(preview).toHaveTextContent("本阶段后续动作");
-    expect(preview).toHaveTextContent("顾问阶段性反馈");
+    expect(preview).toHaveTextContent("下一阶段计划");
+    expect(preview).toHaveTextContent("阶段性反馈");
     expect(preview).not.toHaveTextContent("报告版本");
     expect(preview).not.toHaveTextContent("免责声明");
   });
@@ -212,19 +212,11 @@ describe("monthly reports page", () => {
     const templateLibrary = screen.getByTestId("application-template-library");
 
     APPLICATION_TYPE_OPTIONS.forEach((option) => {
-      const config = getMonthlyReportApplicationConfig(option);
-
       expect(
         within(templateLibrary).getByRole("button", {
           name: `选择${option}模板`,
         }),
       ).toBeInTheDocument();
-      expect(within(templateLibrary).getAllByText(config.templateName).length).toBeGreaterThan(
-        0,
-      );
-      expect(within(templateLibrary).getAllByText(config.theme.themeName).length).toBeGreaterThan(
-        0,
-      );
     });
 
     expect(
@@ -254,7 +246,7 @@ describe("monthly reports page", () => {
       borderColor: "#7c2d12",
     });
     expect(screen.getByTestId("monthly-report-preview")).toHaveTextContent(
-      "综合评价申请反馈报告",
+      "综合评价申请",
     );
     expect(
       screen.getByRole("button", {
@@ -264,26 +256,13 @@ describe("monthly reports page", () => {
     ).toBeInTheDocument();
   });
 
-  it("allows generated template labels to be edited in the report preview", () => {
+  it("removes report template names and style labels from the workspace and preview", () => {
     render(<MonthlyReportsPage />);
 
-    expect(screen.getByLabelText("报告模板名称")).toHaveValue(
+    expect(screen.queryByLabelText("报告模板名称")).not.toBeInTheDocument();
+    expect(screen.queryByLabelText("报告风格标签")).not.toBeInTheDocument();
+    expect(screen.getByTestId("monthly-report-preview")).not.toHaveTextContent(
       "美国本科申请阶段报告",
-    );
-    expect(screen.getByLabelText("报告风格标签")).toHaveValue("美国本科");
-
-    fireEvent.change(screen.getByLabelText("报告模板名称"), {
-      target: { value: "家长沟通月度版" },
-    });
-    fireEvent.change(screen.getByLabelText("报告风格标签"), {
-      target: { value: "温和跟进" },
-    });
-
-    expect(screen.getByTestId("monthly-report-preview")).toHaveTextContent(
-      "家长沟通月度版",
-    );
-    expect(screen.getByTestId("monthly-report-preview")).toHaveTextContent(
-      "温和跟进",
     );
   });
 
@@ -376,17 +355,14 @@ describe("monthly reports page", () => {
     );
   });
 
-  it("keeps generated template labels editable outside the report module list", () => {
+  it("keeps application cards focused on application type and theme colors", () => {
     render(<MonthlyReportsPage />);
 
-    const preview = screen.getByTestId("monthly-report-preview");
+    const templateLibrary = screen.getByTestId("application-template-library");
 
-    fireEvent.change(screen.getByLabelText("报告风格标签"), {
-      target: { value: "自定义风格" },
-    });
-
-    expect(preview).toHaveTextContent("美国本科申请阶段报告");
-    expect(preview).toHaveTextContent("自定义风格");
+    expect(within(templateLibrary).getByText("美国本科新生")).toBeInTheDocument();
+    expect(within(templateLibrary).queryByText("美国本科申请阶段报告")).not.toBeInTheDocument();
+    expect(within(templateLibrary).queryByText("美国本科")).not.toBeInTheDocument();
     expect(screen.queryByLabelText("展示报告模板名称")).not.toBeInTheDocument();
     expect(screen.queryByLabelText("展示报告风格标签")).not.toBeInTheDocument();
   });
@@ -461,7 +437,7 @@ describe("monthly reports page", () => {
     });
     fireEvent.click(screen.getByRole("button", { name: "识别并生成反馈" }));
 
-    expect(screen.getByLabelText("本次阶段性进度")).toHaveValue(
+    expect(screen.getByLabelText("阶段性反馈")).toHaveValue(
       "本月已完成主文书初稿和活动列表梳理。",
     );
     expect(screen.getByLabelText("下一阶段计划")).toHaveValue(
@@ -470,6 +446,39 @@ describe("monthly reports page", () => {
     expect(screen.getByLabelText("需要学生/家庭配合")).toHaveValue(
       "请学生补充奖项证明和护照信息。",
     );
+  });
+
+  it("preserves multiple recognized lines and syncs text formatting to the preview", () => {
+    render(<MonthlyReportsPage />);
+
+    fireEvent.change(screen.getByLabelText("粘贴沟通内容"), {
+      target: {
+        value:
+          "已完成主文书第一轮修改。\n已确认推荐信提交方式。\n下一步继续推进申请系统。\n请学生补充护照。",
+      },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "识别并生成反馈" }));
+
+    expect(screen.getByLabelText("阶段性反馈")).toHaveValue(
+      "已完成主文书第一轮修改。\n已确认推荐信提交方式。",
+    );
+
+    fireEvent.change(screen.getByLabelText("阶段性反馈文字颜色"), {
+      target: { value: "#b91c1c" },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "阶段性反馈加粗" }));
+    fireEvent.click(screen.getByRole("button", { name: "阶段性反馈下划线" }));
+
+    const feedbackParagraph = screen
+      .getByTestId("report-section-completedThisMonth")
+      .querySelector("p");
+    expect(feedbackParagraph).toHaveTextContent("已完成主文书第一轮修改");
+    expect(feedbackParagraph).toHaveTextContent("已确认推荐信提交方式");
+    expect(feedbackParagraph).toHaveStyle({
+      color: "#b91c1c",
+      fontWeight: "700",
+      textDecoration: "underline",
+    });
   });
 
   it("shows uploaded attachments in the attachment list and report preview", () => {
@@ -539,7 +548,7 @@ describe("monthly reports page", () => {
         "材料收集情况：成绩单已收集",
       ),
     );
-    expect(screen.getByLabelText("本次阶段性进度")).toHaveValue(
+    expect(screen.getByLabelText("阶段性反馈")).toHaveValue(
       "申请院校提交情况：UCLA已提交，UCSD待提交",
     );
     expect(screen.getByTestId("monthly-report-preview")).toHaveTextContent(
@@ -625,7 +634,7 @@ describe("monthly reports page", () => {
       "材料收集",
     );
     expect(screen.getByTestId("monthly-report-preview")).not.toHaveTextContent("I-20");
-    expect(screen.getByLabelText("本次阶段性进度")).toHaveValue(
+    expect(screen.getByLabelText("阶段性反馈")).toHaveValue(
       "本月已完成材料表核对。",
     );
   });
@@ -710,7 +719,7 @@ describe("monthly reports page", () => {
     expect(screen.getByLabelText("材料收集")).toHaveValue(
       ["简历信息表：已完成", "护照：已收集", "美签页：已收集"].join("\n"),
     );
-    expect(screen.getByLabelText("本次阶段性进度")).toHaveValue(
+    expect(screen.getByLabelText("阶段性反馈")).toHaveValue(
       "申请进度：UCLA 已提交，UCSD 待提交",
     );
     expect(screen.getByLabelText("学生姓名")).toHaveValue("测试学生甲");
@@ -755,7 +764,7 @@ describe("monthly reports page", () => {
 
     expect(screen.getByLabelText("基础信息")).toHaveValue("目前GPA：3.88");
     expect(screen.getByLabelText("材料收集")).toHaveValue("护照：已收集");
-    expect(screen.getByLabelText("本次阶段性进度")).toHaveValue(
+    expect(screen.getByLabelText("阶段性反馈")).toHaveValue(
       "申请院校提交情况：多伦多大学已提交",
     );
     expect(screen.queryByText("其他识别字段")).not.toBeInTheDocument();
@@ -798,7 +807,7 @@ describe("monthly reports page", () => {
 
     expect(screen.getByLabelText("材料收集")).toHaveValue("护照：已收集");
     expect(screen.queryByText("其他识别字段")).not.toBeInTheDocument();
-    expect(screen.getByLabelText("本次阶段性进度")).toHaveValue(
+    expect(screen.getByLabelText("阶段性反馈")).toHaveValue(
       "已完成上一版沟通回填。",
     );
     expect(screen.getByLabelText("下一阶段计划")).toHaveValue("继续补充材料。");
@@ -834,7 +843,7 @@ describe("monthly reports page", () => {
     });
 
     await waitFor(() =>
-      expect(screen.getByLabelText("本次阶段性进度")).toHaveValue(
+      expect(screen.getByLabelText("阶段性反馈")).toHaveValue(
         "已完成上一版导出报告回填。",
       ),
     );
@@ -919,9 +928,9 @@ describe("monthly reports page", () => {
       "展示申请时间轴",
       "展示基础信息",
       "展示材料收集",
-      "展示本次阶段性进度",
+      "展示阶段性反馈",
       "展示下一阶段计划",
-      "展示学生/家庭待办",
+      "展示需要学生/家庭配合",
       "展示附件列表",
     ].forEach((label) => {
       expect(screen.getByLabelText(label)).toBeInTheDocument();
@@ -929,7 +938,7 @@ describe("monthly reports page", () => {
 
     expect(screen.getByLabelText("展示附件列表")).not.toBeChecked();
     expect(screen.getByTestId("monthly-report-preview")).not.toHaveTextContent(
-      "附件展示",
+      "本次报告附件",
     );
 
     fireEvent.change(screen.getByLabelText("上传附件"), {
@@ -940,7 +949,7 @@ describe("monthly reports page", () => {
 
     expect(screen.getByLabelText("展示附件列表")).toBeChecked();
     expect(screen.getByTestId("monthly-report-preview")).toHaveTextContent(
-      "附件展示",
+      "本次报告附件",
     );
   });
 
@@ -1018,14 +1027,14 @@ describe("monthly reports page", () => {
     expect(exportedText).toContain("申请时间轴");
     expect(exportedText).toContain("基础信息");
     expect(exportedText).toContain("材料收集");
-    expect(exportedText).toContain("本次阶段性进度");
+    expect(exportedText).toContain("阶段性反馈");
     expect(exportedText).toContain("下一阶段计划");
     expect(exportedText).toContain("需要学生/家庭配合");
     expect(exportedText).toContain("Application Progress Report");
     expect(exportedText).toContain("关键摘要");
     expect(exportedText).toContain("材料项目");
-    expect(exportedText).toContain("本阶段后续动作");
-    expect(exportedText).toContain("顾问阶段性反馈");
+    expect(exportedText).not.toContain("本阶段后续动作");
+    expect(exportedText).not.toContain("顾问阶段性反馈");
     expect(exportedText).not.toContain("其他识别字段");
     expect(exportedText).not.toContain("截图识别");
     expect(exportedText).not.toContain("上传识别");
@@ -1072,7 +1081,7 @@ describe("monthly reports page", () => {
   it("keeps edited content and updates template metadata after choosing the full switch option", () => {
     render(<MonthlyReportsPage />);
 
-    fireEvent.change(screen.getByLabelText("本次阶段性进度"), {
+    fireEvent.change(screen.getByLabelText("阶段性反馈"), {
       target: { value: "已经填写的本月进展" },
     });
     fireEvent.change(screen.getByLabelText("申请类型"), {
@@ -1085,11 +1094,9 @@ describe("monthly reports page", () => {
     );
 
     expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
-    expect(screen.getByLabelText("本次阶段性进度")).toHaveValue("已经填写的本月进展");
-    expect(screen.getByLabelText("报告模板名称")).toHaveValue(
-      "中外合办多元路径反馈报告",
-    );
-    expect(screen.getByLabelText("报告风格标签")).toHaveValue("大湾区");
+    expect(screen.getByLabelText("阶段性反馈")).toHaveValue("已经填写的本月进展");
+    expect(screen.queryByLabelText("报告模板名称")).not.toBeInTheDocument();
+    expect(screen.queryByLabelText("报告风格标签")).not.toBeInTheDocument();
     expect(screen.getByLabelText("部门标签")).toHaveValue(
       "大湾区中外合办升学指导中心",
     );
@@ -1117,7 +1124,7 @@ describe("monthly reports page", () => {
     );
 
     expect(screen.getByLabelText("申请类型")).toHaveValue("美国本科新生");
-    expect(screen.getByLabelText("报告模板名称")).toHaveValue("美国本科申请阶段报告");
+    expect(screen.queryByLabelText("报告模板名称")).not.toBeInTheDocument();
     expect(screen.getByLabelText("主色")).toHaveValue(canadaConfig.theme.primaryColor);
   });
 
@@ -1134,9 +1141,7 @@ describe("monthly reports page", () => {
     );
 
     expect(screen.getByLabelText("申请类型")).toHaveValue("加拿大本科");
-    expect(screen.getByLabelText("报告模板名称")).toHaveValue(
-      "加拿大申请阶段反馈报告",
-    );
+    expect(screen.queryByLabelText("报告模板名称")).not.toBeInTheDocument();
     expect(screen.getByText("签证方案规划")).toBeInTheDocument();
   });
 
