@@ -31,10 +31,14 @@ type EditableReportContent = {
   title: string;
   studentName: string;
   season: string;
+  reportDate: string;
   departmentLabel: string;
+  completedThisMonthTitle: string;
   completedThisMonth: string;
+  nextMonthPlanTitle: string;
   nextMonthPlan: string;
   nextStageFocus: string;
+  clientTasksTitle: string;
   clientTasks: string;
   recognizedApplicationStatus: string;
   studentBasicInfo: string;
@@ -322,8 +326,12 @@ const reportModuleToggleLabels: Record<ReportModuleKey, string> = {
   attachments: "展示附件列表",
 };
 
-const exportDate = "20260707";
 const emptySectionPlaceholder = "待填写";
+const defaultEditableSectionTitles = {
+  completedThisMonth: "阶段性反馈",
+  nextMonthPlan: "下一阶段计划",
+  clientTasks: "需要学生/家庭配合",
+};
 const defaultStudentBasicInfo = [
   "就读年级：",
   "就读学校：",
@@ -344,6 +352,7 @@ const statusStyles: Record<MaterialStatusKey, { label: string; bg: string; color
 
 function buildDefaultContent(
   applicationType: MonthlyReportApplicationType,
+  reportDate = "",
 ): EditableReportContent {
   const config = getMonthlyReportApplicationConfig(applicationType);
 
@@ -351,16 +360,38 @@ function buildDefaultContent(
     title: "测试学生甲申请季阶段性反馈报告",
     studentName: "测试学生甲",
     season: "2027秋",
+    reportDate,
     departmentLabel: departmentLabelByApplicationType[applicationType],
+    completedThisMonthTitle: defaultEditableSectionTitles.completedThisMonth,
     completedThisMonth: config.defaultContent.completedThisMonth,
+    nextMonthPlanTitle: defaultEditableSectionTitles.nextMonthPlan,
     nextMonthPlan: config.defaultContent.nextMonthPlan,
     nextStageFocus: config.defaultContent.nextStageFocus,
+    clientTasksTitle: defaultEditableSectionTitles.clientTasks,
     clientTasks: config.defaultContent.clientTasks.join("\n"),
     recognizedApplicationStatus: "",
     studentBasicInfo: defaultStudentBasicInfo,
     materialCollectionStatus: "",
     additionalRecognizedFields: "",
   };
+}
+
+function getTodayReportDateInputValue(date = new Date()) {
+  const parts = new Intl.DateTimeFormat("en-CA", {
+    timeZone: "Asia/Shanghai",
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+  }).formatToParts(date);
+  const valueByType = Object.fromEntries(
+    parts.map((part) => [part.type, part.value]),
+  );
+  return `${valueByType.year}-${valueByType.month}-${valueByType.day}`;
+}
+
+function formatReportDateForDisplay(value: string) {
+  const digits = value.replace(/\D/g, "");
+  return digits.length === 8 ? digits : value.trim();
 }
 
 function buildDefaultTextFormatting(color: string): TextFormattingMap {
@@ -572,6 +603,7 @@ function buildStyledTextSegments(
 type ReportTextEditorProps = {
   id: string;
   label: string;
+  sectionTitle?: string;
   value: string;
   formatting: TextFormatting;
   formattingRanges: TextFormattingRange[];
@@ -579,6 +611,7 @@ type ReportTextEditorProps = {
   minHeightClass?: string;
   placeholder?: string;
   onValueChange: (value: string) => void;
+  onSectionTitleChange?: (value: string) => void;
   onFormattingChange: (
     patch: Partial<TextFormatting>,
     selection: TextSelection,
@@ -588,6 +621,7 @@ type ReportTextEditorProps = {
 function ReportTextEditor({
   id,
   label,
+  sectionTitle,
   value,
   formatting,
   formattingRanges,
@@ -595,6 +629,7 @@ function ReportTextEditor({
   minHeightClass = "min-h-28",
   placeholder,
   onValueChange,
+  onSectionTitleChange,
   onFormattingChange,
 }: ReportTextEditorProps) {
   const textareaRef = useRef<HTMLTextAreaElement>(null);
@@ -618,6 +653,17 @@ function ReportTextEditor({
 
   return (
     <section className={`grid gap-2 ${className}`}>
+      {sectionTitle !== undefined && onSectionTitleChange ? (
+        <label className="grid gap-1 text-sm font-medium" htmlFor={`${id}-title`}>
+          {label}板块标题
+          <input
+            className="rounded-lg border border-slate-300 px-3 py-2 text-sm"
+            id={`${id}-title`}
+            value={sectionTitle}
+            onChange={(event) => onSectionTitleChange(event.target.value)}
+          />
+        </label>
+      ) : null}
       <div className="flex flex-wrap items-center justify-between gap-2">
         <label className="text-sm font-medium" htmlFor={id}>
           {label}
@@ -1584,6 +1630,14 @@ export function MonthlyReportWorkspace() {
   };
 
   useEffect(() => {
+    setContent((current) =>
+      current.reportDate
+        ? current
+        : { ...current, reportDate: getTodayReportDateInputValue() },
+    );
+  }, []);
+
+  useEffect(() => {
     const nextFormattedText = {
       completedThisMonth: content.completedThisMonth,
       nextMonthPlan: content.nextMonthPlan,
@@ -1716,7 +1770,12 @@ export function MonthlyReportWorkspace() {
     setTheme(nextConfig.theme);
     setTimelineItems(buildDefaultTimeline(nextApplicationType));
     if (resetContent) {
-      setContent(buildDefaultContent(nextApplicationType));
+      setContent(
+        buildDefaultContent(
+          nextApplicationType,
+          getTodayReportDateInputValue(),
+        ),
+      );
       setTextFormatting(buildDefaultTextFormatting(nextConfig.theme.textColor));
       setTextFormattingRanges(buildDefaultTextFormattingRanges());
       setCommunicationText("");
@@ -2162,12 +2221,20 @@ export function MonthlyReportWorkspace() {
   }
 
   const attachmentNames = attachments.map((attachment) => attachment.name).join("、");
+  const reportDateDisplay = formatReportDateForDisplay(content.reportDate);
+  const completedThisMonthTitle =
+    content.completedThisMonthTitle.trim() ||
+    defaultEditableSectionTitles.completedThisMonth;
+  const nextMonthPlanTitle =
+    content.nextMonthPlanTitle.trim() || defaultEditableSectionTitles.nextMonthPlan;
+  const clientTasksTitle =
+    content.clientTasksTitle.trim() || defaultEditableSectionTitles.clientTasks;
   const exportBaseName = [
     content.studentName,
     applicationType,
     content.season,
     "反馈报告",
-    exportDate,
+    reportDateDisplay,
   ]
     .map(sanitizeFileNameSegment)
     .filter(Boolean)
@@ -2314,7 +2381,7 @@ export function MonthlyReportWorkspace() {
         return `<section class="${sectionClass(key)}" data-layout="${modules.basicInfo ? "half" : "full"}"><h2 class="section-title">材料收集</h2><table><thead><tr><th>材料项目</th><th>状态</th><th>备注</th></tr></thead><tbody>${materialRowsHtml}</tbody></table></section>`;
       }
       if (key === "completedThisMonth") {
-        return `<section class="${sectionClass(key)}"><h2 class="section-title">阶段性反馈</h2><p style="${getTextFormattingCss("completedThisMonth")}">${content.completedThisMonth.trim() ? getStyledTextHtml("completedThisMonth", content.completedThisMonth) : escapeHtml(emptySectionPlaceholder)}</p></section>`;
+        return `<section class="${sectionClass(key)}"><h2 class="section-title">${escapeHtml(completedThisMonthTitle)}</h2><p style="${getTextFormattingCss("completedThisMonth")}">${content.completedThisMonth.trim() ? getStyledTextHtml("completedThisMonth", content.completedThisMonth) : escapeHtml(emptySectionPlaceholder)}</p></section>`;
       }
       if (key === "nextMonthPlan") {
         const planLinesHtml =
@@ -2326,10 +2393,10 @@ export function MonthlyReportWorkspace() {
                 )
                 .join("")
             : `<p>${escapeHtml(emptySectionPlaceholder)}</p>`;
-        return `<section class="${sectionClass(key)}"><h2 class="section-title">下一阶段计划</h2><div class="plain-lines" style="${getTextFormattingCss("nextMonthPlan")}">${planLinesHtml}</div></section>`;
+        return `<section class="${sectionClass(key)}"><h2 class="section-title">${escapeHtml(nextMonthPlanTitle)}</h2><div class="plain-lines" style="${getTextFormattingCss("nextMonthPlan")}">${planLinesHtml}</div></section>`;
       }
       if (key === "clientTasks") {
-        return `<section class="${sectionClass(key)}"><h2 class="section-title">需要学生/家庭配合</h2><p style="${getTextFormattingCss("clientTasks")}">${content.clientTasks.trim() ? getStyledTextHtml("clientTasks", content.clientTasks) : escapeHtml(emptySectionPlaceholder)}</p></section>`;
+        return `<section class="${sectionClass(key)}"><h2 class="section-title">${escapeHtml(clientTasksTitle)}</h2><p style="${getTextFormattingCss("clientTasks")}">${content.clientTasks.trim() ? getStyledTextHtml("clientTasks", content.clientTasks) : escapeHtml(emptySectionPlaceholder)}</p></section>`;
       }
       if (key === "attachments" && attachmentNames) {
         return `<section class="${sectionClass(key)} attachments"><h2 class="section-title">附件</h2><p>${attachmentHtml}</p></section>`;
@@ -2413,7 +2480,7 @@ th{width:36%;color:${theme.mutedTextColor};font-weight:600}
 ${modules.studentName ? `<span>学生姓名：${escapeHtml(content.studentName)}</span>` : ""}
 ${modules.season ? `<span>申请季度：${escapeHtml(content.season)}</span>` : ""}
 ${modules.applicationType ? `<span>申请类型：${escapeHtml(applicationType)}</span>` : ""}
-<span>报告日期：${exportDate}</span>
+<span>报告日期：${escapeHtml(reportDateDisplay)}</span>
 </div>
 </div>
 </section>
@@ -2667,6 +2734,16 @@ ${renderedReportModules}
       canvasContext.stroke();
     }
 
+    function setCanvasSectionTitleFont(text: string) {
+      let fontSize = useCompactExport ? 18 : 21;
+      const minimumFontSize = useCompactExport ? 13 : 15;
+      do {
+        canvasContext.font = `bold ${fontSize}px Arial, "PingFang SC", "Microsoft YaHei", sans-serif`;
+        if (canvasContext.measureText(text).width <= contentWidth - 36) return;
+        fontSize -= 1;
+      } while (fontSize >= minimumFontSize);
+    }
+
     context.fillStyle = theme.backgroundColor;
     context.fillRect(0, 0, canvas.width, canvas.height);
     context.fillStyle = theme.cardColor;
@@ -2758,7 +2835,7 @@ ${renderedReportModules}
       modules.studentName ? `学生姓名：${content.studentName}` : "",
       modules.season ? `申请季度：${content.season}` : "",
       modules.applicationType ? `申请类型：${applicationType}` : "",
-      `报告日期：${exportDate}`,
+      `报告日期：${reportDateDisplay}`,
     ]
       .filter(Boolean)
       .join("   ");
@@ -3158,9 +3235,9 @@ ${renderedReportModules}
       if (key === "completedThisMonth") {
         drawReportCard(key, estimateCardHeight(key, useCompactExport), (cardY) => {
           context.fillStyle = theme.titleColor;
-          context.font = `bold ${useCompactExport ? 18 : 21}px Arial, "PingFang SC", "Microsoft YaHei", sans-serif`;
+          setCanvasSectionTitleFont(completedThisMonthTitle);
           context.fillText(
-            "阶段性反馈",
+            completedThisMonthTitle,
             contentX + 18,
             cardY + (useCompactExport ? 30 : 34),
           );
@@ -3181,9 +3258,9 @@ ${renderedReportModules}
       if (key === "nextMonthPlan") {
         drawReportCard(key, estimateCardHeight(key, useCompactExport), (cardY) => {
           context.fillStyle = theme.titleColor;
-          context.font = `bold ${useCompactExport ? 18 : 21}px Arial, "PingFang SC", "Microsoft YaHei", sans-serif`;
+          setCanvasSectionTitleFont(nextMonthPlanTitle);
           context.fillText(
-            "下一阶段计划",
+            nextMonthPlanTitle,
             contentX + 18,
             cardY + (useCompactExport ? 30 : 34),
           );
@@ -3204,9 +3281,9 @@ ${renderedReportModules}
       if (key === "clientTasks") {
         drawReportCard(key, estimateCardHeight(key, useCompactExport), (cardY) => {
           context.fillStyle = theme.titleColor;
-          context.font = `bold ${useCompactExport ? 18 : 21}px Arial, "PingFang SC", "Microsoft YaHei", sans-serif`;
+          setCanvasSectionTitleFont(clientTasksTitle);
           context.fillText(
-            "需要学生/家庭配合",
+            clientTasksTitle,
             contentX + 18,
             cardY + (useCompactExport ? 30 : 34),
           );
@@ -3587,7 +3664,7 @@ ${renderedReportModules}
         <section key={key} {...sectionProps}>
           <div data-testid="report-section">
             <h3 className={sectionHeaderClass} style={{ color: theme.titleColor }}>
-              阶段性反馈
+              {completedThisMonthTitle}
             </h3>
             <p
               className="mt-2 whitespace-pre-line"
@@ -3607,7 +3684,7 @@ ${renderedReportModules}
         <section key={key} {...sectionProps}>
           <div data-testid="report-section">
             <h3 className={sectionHeaderClass} style={{ color: theme.titleColor }}>
-              下一阶段计划
+              {nextMonthPlanTitle}
             </h3>
             <div
               className="mt-2 space-y-1"
@@ -3638,7 +3715,7 @@ ${renderedReportModules}
         <section key={key} {...sectionProps}>
           <div data-testid="report-section">
             <h3 className={sectionHeaderClass} style={{ color: theme.titleColor }}>
-              需要学生/家庭配合
+              {clientTasksTitle}
             </h3>
             <p
               className="mt-1 whitespace-pre-line"
@@ -3782,6 +3859,17 @@ ${renderedReportModules}
                   className="rounded-lg border border-slate-300 px-3 py-2 text-sm"
                   value={content.season}
                   onChange={(event) => updateContent("season", event.target.value)}
+                />
+              </label>
+              <label className="grid gap-1 text-sm font-medium">
+                报告日期
+                <input
+                  className="rounded-lg border border-slate-300 px-3 py-2 text-sm"
+                  type="date"
+                  value={content.reportDate}
+                  onChange={(event) =>
+                    updateContent("reportDate", event.target.value)
+                  }
                 />
               </label>
             </div>
@@ -4071,7 +4159,11 @@ ${renderedReportModules}
                 formattingRanges={textFormattingRanges.completedThisMonth}
                 id="completed-this-month"
                 label="阶段性反馈"
+                sectionTitle={content.completedThisMonthTitle}
                 value={content.completedThisMonth}
+                onSectionTitleChange={(value) =>
+                  updateContent("completedThisMonthTitle", value)
+                }
                 onFormattingChange={(patch, selection) =>
                   updateTextFormatting("completedThisMonth", patch, selection)
                 }
@@ -4084,7 +4176,11 @@ ${renderedReportModules}
                 formattingRanges={textFormattingRanges.nextMonthPlan}
                 id="next-month-plan"
                 label="下一阶段计划"
+                sectionTitle={content.nextMonthPlanTitle}
                 value={content.nextMonthPlan}
+                onSectionTitleChange={(value) =>
+                  updateContent("nextMonthPlanTitle", value)
+                }
                 onFormattingChange={(patch, selection) =>
                   updateTextFormatting("nextMonthPlan", patch, selection)
                 }
@@ -4096,7 +4192,11 @@ ${renderedReportModules}
                 id="client-tasks"
                 label="需要学生/家庭配合"
                 minHeightClass="min-h-24"
+                sectionTitle={content.clientTasksTitle}
                 value={content.clientTasks}
+                onSectionTitleChange={(value) =>
+                  updateContent("clientTasksTitle", value)
+                }
                 onFormattingChange={(patch, selection) =>
                   updateTextFormatting("clientTasks", patch, selection)
                 }
@@ -4405,7 +4505,7 @@ ${renderedReportModules}
                   {modules.studentName ? <span>学生姓名：{content.studentName}</span> : null}
                   {modules.season ? <span>申请季度：{content.season}</span> : null}
                   {modules.applicationType ? <span>申请类型：{applicationType}</span> : null}
-                  <span>报告日期：{exportDate}</span>
+                  <span>报告日期：{reportDateDisplay}</span>
                 </div>
               </div>
             </section>

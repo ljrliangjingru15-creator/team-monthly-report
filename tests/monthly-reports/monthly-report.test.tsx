@@ -65,6 +65,22 @@ const applications: ApplicationWithStudent[] = [
   },
 ];
 
+function getExpectedTodayReportDate() {
+  const parts = new Intl.DateTimeFormat("en-CA", {
+    timeZone: "Asia/Shanghai",
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+  }).formatToParts(new Date());
+  const valueByType = Object.fromEntries(
+    parts.map((part) => [part.type, part.value]),
+  );
+  return {
+    input: `${valueByType.year}-${valueByType.month}-${valueByType.day}`,
+    display: `${valueByType.year}${valueByType.month}${valueByType.day}`,
+  };
+}
+
 afterEach(() => {
   cleanup();
   vi.restoreAllMocks();
@@ -215,6 +231,48 @@ describe("monthly reports page", () => {
       }),
     ).toBeInTheDocument();
     expect(preview).not.toHaveTextContent("测试学生甲申请季阶段性反馈报告");
+  });
+
+  it("defaults the report date to today and allows editing report date and section titles", () => {
+    render(<MonthlyReportsPage />);
+
+    const preview = screen.getByTestId("monthly-report-preview");
+    const today = getExpectedTodayReportDate();
+    expect(screen.getByLabelText("报告日期")).toHaveValue(today.input);
+    expect(preview).toHaveTextContent(`报告日期：${today.display}`);
+    expect(screen.getByLabelText("阶段性反馈板块标题")).toHaveValue(
+      "阶段性反馈",
+    );
+    expect(screen.getByLabelText("下一阶段计划板块标题")).toHaveValue(
+      "下一阶段计划",
+    );
+    expect(screen.getByLabelText("需要学生/家庭配合板块标题")).toHaveValue(
+      "需要学生/家庭配合",
+    );
+
+    fireEvent.change(screen.getByLabelText("报告日期"), {
+      target: { value: "2026-08-09" },
+    });
+    fireEvent.change(screen.getByLabelText("阶段性反馈板块标题"), {
+      target: { value: "本次顾问反馈" },
+    });
+    fireEvent.change(screen.getByLabelText("下一阶段计划板块标题"), {
+      target: { value: "后续推进计划" },
+    });
+    fireEvent.change(
+      screen.getByLabelText("需要学生/家庭配合板块标题"),
+      { target: { value: "家庭配合事项" } },
+    );
+
+    expect(preview).toHaveTextContent("报告日期：20260809");
+    expect(preview).toHaveTextContent("本次顾问反馈");
+    expect(preview).toHaveTextContent("后续推进计划");
+    expect(preview).toHaveTextContent("家庭配合事项");
+    expect(
+      screen.getByText(
+        "测试学生甲_美国本科新生_2027秋_反馈报告_20260809.pdf",
+      ),
+    ).toBeInTheDocument();
   });
 
   it("renders current focus as an independent card before the summary", () => {
@@ -1074,7 +1132,11 @@ describe("monthly reports page", () => {
     expect(screen.getByRole("heading", { name: "导出设置" })).toBeInTheDocument();
     expect(screen.getByLabelText("导出 PDF")).toBeChecked();
     expect(screen.getByLabelText("导出 PNG")).not.toBeChecked();
-    expect(screen.getByText("测试学生甲_美国本科新生_2027秋_反馈报告_20260707.pdf")).toBeInTheDocument();
+    expect(
+      screen.getByText(
+        `测试学生甲_美国本科新生_2027秋_反馈报告_${getExpectedTodayReportDate().display}.pdf`,
+      ),
+    ).toBeInTheDocument();
 
     fireEvent.click(screen.getByLabelText("导出 PNG"));
     fireEvent.click(screen.getByRole("button", { name: "导出反馈报告" }));
@@ -1158,6 +1220,46 @@ describe("monthly reports page", () => {
     expect(exportedText).not.toContain("下月计划");
     expect(exportedText).not.toContain("免责声明");
     expect(exportedText).not.toContain("报告版本");
+  });
+
+  it("exports the manually edited report date and section titles", async () => {
+    const exportedBlobs: Blob[] = [];
+    vi.spyOn(URL, "createObjectURL").mockImplementation((blob) => {
+      exportedBlobs.push(blob as Blob);
+      return "blob:monthly-report";
+    });
+    vi.spyOn(URL, "revokeObjectURL").mockImplementation(() => {});
+    vi.spyOn(HTMLAnchorElement.prototype, "click").mockImplementation(() => {});
+
+    render(<MonthlyReportsPage />);
+
+    fireEvent.change(screen.getByLabelText("报告日期"), {
+      target: { value: "2026-08-09" },
+    });
+    fireEvent.change(screen.getByLabelText("阶段性反馈板块标题"), {
+      target: { value: "本次顾问反馈" },
+    });
+    fireEvent.change(screen.getByLabelText("下一阶段计划板块标题"), {
+      target: { value: "后续推进计划" },
+    });
+    fireEvent.change(
+      screen.getByLabelText("需要学生/家庭配合板块标题"),
+      { target: { value: "家庭配合事项" } },
+    );
+    fireEvent.click(screen.getByRole("button", { name: "导出反馈报告" }));
+
+    await waitFor(() => expect(exportedBlobs).toHaveLength(1));
+    const exportedText = await exportedBlobs[0].text();
+    expect(exportedText).toContain("报告日期：20260809");
+    expect(exportedText).toContain(
+      '<h2 class="section-title">本次顾问反馈</h2>',
+    );
+    expect(exportedText).toContain(
+      '<h2 class="section-title">后续推进计划</h2>',
+    );
+    expect(exportedText).toContain(
+      '<h2 class="section-title">家庭配合事项</h2>',
+    );
   });
 
   it("exports the same report section order, highlight, and hidden-state as preview", async () => {
