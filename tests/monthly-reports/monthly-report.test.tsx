@@ -144,6 +144,51 @@ describe("monthly reports page", () => {
     expect(preview).not.toHaveTextContent("免责声明");
   });
 
+  it("provides six editable basic information fields before importing Excel", () => {
+    render(<MonthlyReportsPage />);
+
+    expect(screen.getByLabelText("基础信息")).toHaveValue(
+      [
+        "就读年级：",
+        "就读学校：",
+        "语言成绩：",
+        "标化考试：",
+        "AP分数：",
+        "GPA：",
+      ].join("\n"),
+    );
+
+    const basicInfoSection = screen.getByTestId("report-section-basicInfo");
+    ["就读年级", "就读学校", "语言成绩", "标化考试", "AP分数", "GPA"].forEach(
+      (label) => expect(basicInfoSection).toHaveTextContent(label),
+    );
+  });
+
+  it("pairs basic information and material collection, then expands a lone section", () => {
+    render(<MonthlyReportsPage />);
+
+    const pair = screen.getByTestId("basic-material-pair");
+    expect(pair).toContainElement(screen.getByTestId("report-section-basicInfo"));
+    expect(pair).toContainElement(screen.getByTestId("report-section-materialCollection"));
+    expect(screen.getByTestId("report-section-basicInfo")).toHaveAttribute(
+      "data-layout",
+      "half",
+    );
+    expect(screen.getByTestId("report-section-materialCollection")).toHaveAttribute(
+      "data-layout",
+      "half",
+    );
+
+    fireEvent.click(screen.getByLabelText("展示材料收集"));
+
+    expect(screen.queryByTestId("basic-material-pair")).not.toBeInTheDocument();
+    expect(screen.getByTestId("report-section-basicInfo")).toHaveAttribute(
+      "data-layout",
+      "full",
+    );
+    expect(screen.queryByTestId("report-section-materialCollection")).not.toBeInTheDocument();
+  });
+
   it("uses the editable report title as the largest report heading", () => {
     render(<MonthlyReportsPage />);
 
@@ -1033,6 +1078,8 @@ describe("monthly reports page", () => {
     expect(exportedText).toContain("Application Progress Report");
     expect(exportedText).toContain("关键摘要");
     expect(exportedText).toContain("材料项目");
+    expect(exportedText).toContain('class="paired-sections"');
+    expect(exportedText).toContain('data-layout="half"');
     expect(exportedText).not.toContain("本阶段后续动作");
     expect(exportedText).not.toContain("顾问阶段性反馈");
     expect(exportedText).not.toContain("其他识别字段");
@@ -1070,6 +1117,8 @@ describe("monthly reports page", () => {
     );
     expect(exportedText).not.toContain("<h2 class=\"section-title\">申请时间轴</h2>");
     expect(exportedText).not.toContain("<h2 class=\"section-title\">基础信息</h2>");
+    expect(exportedText).not.toContain('class="paired-sections"');
+    expect(exportedText).toContain('data-layout="full"');
     expect(exportedText.indexOf("关键摘要")).toBeLessThan(
       exportedText.indexOf("当前阶段重点和下一步建议"),
     );

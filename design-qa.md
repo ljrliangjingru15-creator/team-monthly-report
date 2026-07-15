@@ -1,47 +1,56 @@
 # Monthly Report Design QA
 
-- Source visual truth: `/var/folders/02/5h_prj010ls_vkh9c78kpshm0000gn/T/codex-clipboard-d0d0ac65-4ce8-4b26-b9b2-9d128ebda081.png`
-- Before-state export reference: `/Users/jingru/Library/Containers/com.tencent.xinWeChat/Data/Documents/xwechat_files/wxid_0583215832012_b839/temp/RWTemp/2026-07/9ac391733ce2e915e2fa73ac8859551b.png`
-- Implementation: `https://monthly-report-deploy-iota.vercel.app/monthly-reports`
-- Intended viewport: desktop workspace at 1440 x 1000, with a focused crop of the report preview
-- State: default US undergraduate freshman report with multiline feedback content
+- Source visual truth: `/var/folders/02/5h_prj010ls_vkh9c78kpshm0000gn/T/codex-clipboard-f627c63e-bb80-4caa-9037-49fceca611c6.png`
+- Browser-rendered implementation screenshot: `/Users/jingru/Documents/申请进度管理/design-qa-basic-material-2026-07-15.png`
+- Actual PNG export: `/Users/jingru/Downloads/测试学生甲_美国本科新生_2027秋_反馈报告_20260707.png`
+- Actual PDF export: `/Users/jingru/Downloads/测试学生甲_美国本科新生_2027秋_反馈报告_20260707.pdf`
+- Combined full-view comparison: `/Users/jingru/Documents/申请进度管理/design-qa-comparison-2026-07-15.png`
+- Implementation URL: `http://127.0.0.1:3007/monthly-reports`
+- Viewport: 1280 x 720
+- State: default US undergraduate freshman report, both information modules enabled; secondary check with material collection disabled
 
 **Full-view comparison evidence**
 
-The source and before-state images were opened and compared. A post-change browser screenshot could not be captured: the in-app browser blocked further local-address access after the development server restart, and the production HTTPS page timed out twice in the browser runtime. Vercel independently reports the production deployment as Ready.
+The source and the first 1240 x 1754 pixels of the actual PNG export were normalized to the same height and placed side by side in `design-qa-comparison-2026-07-15.png`. The requested information region preserves the Figma composition: two equal-width rounded cards on one row, aligned at the same top edge. Differences in timeline row count and empty-field content reflect current application data and the product's required default modules rather than layout drift.
 
 **Focused region comparison evidence**
 
-Blocked for the same reason. Code and automated tests verify the intended focused changes: rounded hero clipping in Canvas export, rounded hero styling in preview and HTML export, pill-shaped season/application badges, rounded report cards, exact section-title copy, preserved line breaks, and synchronized text formatting tokens.
+The browser capture shows the paired cards at the same `y=222.5`, the same `height=275`, and equal `width=564.5`. With material collection disabled, the basic information card expands to `width=1141`, reports `data-layout=full`, and the pair wrapper is removed. The actual PNG export independently shows the same two-column layout.
+
+**Required fidelity surfaces**
+
+- Fonts and typography: Existing Chinese/Arial fallback stack, weights, sizes, and hierarchy remain consistent across preview and export. No clipping or unintended wrapping is visible in the paired region.
+- Spacing and layout rhythm: Equal tracks, 20px Canvas gap, aligned card tops, matching heights, rounded corners, and full-width fallback all pass.
+- Colors and visual tokens: Existing theme colors, status colors, card borders, and highlighted states are preserved.
+- Image quality and asset fidelity: The official New Oriental logo remains sharp and correctly scaled in the actual export; no substitute asset is used.
+- Copy and content: The six required default basic-information labels appear and remain editable. Empty values render as `待填写`.
 
 **Findings**
 
-- [P1] Post-change visual capture is unavailable.
-  Location: production report preview and exported PNG/PDF.
-  Evidence: browser access timed out before a new implementation screenshot could be captured.
-  Impact: visual fidelity cannot be certified from browser-rendered evidence in this run.
-  Fix: repeat the focused screenshot comparison once browser connectivity to the production domain is available.
+- No actionable P0, P1, or P2 mismatch remains for the requested two-column and fallback behavior.
+- [P3] Real imported material remarks with unusually long text may increase visual density in the compact column. Existing wrapping keeps the content visible, but a future row-height refinement could make very long records more spacious.
 
-- [P3] The implementation intentionally keeps dynamically ordered modules in a single vertical flow.
-  Location: report modules below the timeline.
-  Evidence: the Figma reference pairs some modules in two columns, while the product requires arbitrary hide/reorder behavior and long content pagination.
-  Impact: composition is slightly less compact than the reference but avoids clipping and unstable reflow for real reports.
-  Fix: optional future enhancement could pair adjacent compatible modules only when both are short enough.
+**Primary interactions tested**
+
+- Both modules enabled: paired layout rendered in preview.
+- Material collection disabled: basic information expanded to full width.
+- PNG selected and PDF deselected: export completed with the expected file name.
+- PDF selected and PNG deselected: a valid two-page A4 PDF was generated; both pages were rendered and checked, with overflow content continuing at the top of page two.
+- Console checked after layout toggle and export: no errors.
 
 **Comparison history**
 
-1. Before-state findings: square export hero, plain right-aligned type/season text, oversized gradient emphasis, legacy combined section titles, missing rich-text controls, and collapsed/truncated multiline content.
-2. Fixes made: rounded and clipped hero; pill badges; lighter card elevation; exact section titles; template/style labels removed; multiline preservation; color, bold, and underline controls; Canvas/HTML/preview formatting synchronization; local development origin allowlist.
-3. Post-fix evidence: 44 focused tests pass, production build passes, and Vercel deployment is Ready. Browser-rendered visual evidence remains unavailable.
+1. Earlier state: preview and exports rendered basic information and material collection as separate full-width rows.
+2. Fixes: paired composition added to React preview, HTML export, Canvas PNG export, PDF source canvas, and export height estimation; single-module fallback retained.
+3. Post-fix evidence: browser geometry checks, focused screenshot, actual PNG export, combined comparison image, 46 focused tests, and a successful production build.
 
 **Implementation Checklist**
 
-- [x] Match hero and card radii across preview, HTML, PNG, and PDF paths.
-- [x] Remove report template name and style label from visible UI and exports.
-- [x] Preserve multiline content without truncation.
-- [x] Add color, bold, and underline controls for editable report content.
-- [x] Rename report sections consistently.
-- [x] Restore local and LAN development interactivity through `allowedDevOrigins`.
-- [ ] Capture the deployed preview and exported PNG/PDF for final visual comparison.
+- [x] Pair basic information and material collection when both are enabled.
+- [x] Use equal widths and equal heights.
+- [x] Expand either lone module to the full report width.
+- [x] Keep preview, HTML, PNG, and PDF rendering behavior synchronized.
+- [x] Provide six editable default basic-information fields.
+- [x] Verify the actual PNG export and browser console.
 
-final result: blocked
+final result: passed

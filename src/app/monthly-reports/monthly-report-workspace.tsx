@@ -306,6 +306,14 @@ const reportModuleToggleLabels: Record<ReportModuleKey, string> = {
 
 const exportDate = "20260707";
 const emptySectionPlaceholder = "待填写";
+const defaultStudentBasicInfo = [
+  "就读年级：",
+  "就读学校：",
+  "语言成绩：",
+  "标化考试：",
+  "AP分数：",
+  "GPA：",
+].join("\n");
 
 const statusStyles: Record<MaterialStatusKey, { label: string; bg: string; color: string }> = {
   done: { label: "已完成", bg: "#ddf7ed", color: "#047857" },
@@ -331,7 +339,7 @@ function buildDefaultContent(
     nextStageFocus: config.defaultContent.nextStageFocus,
     clientTasks: config.defaultContent.clientTasks.join("\n"),
     recognizedApplicationStatus: "",
-    studentBasicInfo: "",
+    studentBasicInfo: defaultStudentBasicInfo,
     materialCollectionStatus: "",
     additionalRecognizedFields: "",
   };
@@ -1052,11 +1060,14 @@ function splitReportLines(text: string) {
 
 function parseKeyValueRows(text: string): KeyValueRow[] {
   return splitReportLines(text).map((line) => {
-    const [label, ...valueParts] = line.split(/[:：]/);
-    const value = valueParts.join("：").trim();
-    return value
-      ? { label: label.trim(), value }
-      : { label: line.trim(), value: emptySectionPlaceholder };
+    const separatorIndex = line.search(/[:：]/);
+    if (separatorIndex < 0) {
+      return { label: line.trim(), value: emptySectionPlaceholder };
+    }
+
+    const label = line.slice(0, separatorIndex).trim();
+    const value = line.slice(separatorIndex + 1).trim();
+    return { label, value: value || emptySectionPlaceholder };
   });
 }
 
@@ -1767,37 +1778,50 @@ export function MonthlyReportWorkspace() {
     const attachmentHtml = escapeHtml(attachmentNames);
     const sectionClass = (key: ReportModuleKey) =>
       highlightedModules[key] ? "section-card highlighted" : "section-card";
+    const renderReportModule = (key: ReportModuleKey) => {
+      if (!modules[key]) return "";
+      if (key === "stageFocus") {
+        return `<section class="${sectionClass(key)}"><h2 class="section-title">当前阶段重点和下一步建议</h2><div class="focus-grid"><div><h3>当前阶段重点</h3><p>${escapeHtml(currentTimelineItem?.label ?? emptySectionPlaceholder)}</p></div><div><h3>下一步建议</h3><p>${escapeHtml(content.nextStageFocus)}</p></div></div></section>`;
+      }
+      if (key === "summary") {
+        return `<section class="${sectionClass(key)}" aria-label="关键摘要"><h2 class="section-title">关键摘要</h2><div class="metrics"><div class="metric">材料收集完整度<strong>${escapeHtml(metricSummary.materialText)}</strong><div class="progress"><span style="width:${metricSummary.materialPercent}%"></span></div></div><div class="metric">核心学术信息<strong>${escapeHtml(metricSummary.academicText)}</strong></div><div class="metric">当前就读学校<strong>${escapeHtml(metricSummary.school)}</strong></div></div></section>`;
+      }
+      if (key === "timeline") {
+        return `<section class="${sectionClass(key)}"><h2 class="section-title">${escapeHtml(config.moduleTitles.timeline)}</h2><ol class="timeline">${timelineHtml}</ol></section>`;
+      }
+      if (key === "basicInfo") {
+        return `<section class="${sectionClass(key)}" data-layout="${modules.materialCollection ? "half" : "full"}"><h2 class="section-title">基础信息</h2><table>${infoRowsHtml}</table></section>`;
+      }
+      if (key === "materialCollection") {
+        return `<section class="${sectionClass(key)}" data-layout="${modules.basicInfo ? "half" : "full"}"><h2 class="section-title">材料收集</h2><table><thead><tr><th>材料项目</th><th>状态</th><th>备注</th></tr></thead><tbody>${materialRowsHtml}</tbody></table></section>`;
+      }
+      if (key === "completedThisMonth") {
+        return `<section class="${sectionClass(key)}"><h2 class="section-title">阶段性反馈</h2><p style="${getTextFormattingCss("completedThisMonth")}">${escapeHtml(content.completedThisMonth)}</p></section>`;
+      }
+      if (key === "nextMonthPlan") {
+        return `<section class="${sectionClass(key)}"><h2 class="section-title">下一阶段计划</h2><ul style="${getTextFormattingCss("nextMonthPlan")}">${nextActionsHtml}</ul></section>`;
+      }
+      if (key === "clientTasks") {
+        return `<section class="${sectionClass(key)}"><h2 class="section-title">需要学生/家庭配合</h2><p style="${getTextFormattingCss("clientTasks")}">${escapeHtml(content.clientTasks)}</p></section>`;
+      }
+      if (key === "attachments" && attachmentNames) {
+        return `<section class="${sectionClass(key)} attachments"><h2 class="section-title">附件</h2><p>${attachmentHtml}</p></section>`;
+      }
+      return "";
+    };
+    const shouldPairInformationSections = modules.basicInfo && modules.materialCollection;
+    let renderedInformationPair = false;
     const renderedReportModules = reportModuleOrder
       .map((key) => {
-        if (!modules[key]) return "";
-        if (key === "stageFocus") {
-          return `<section class="${sectionClass(key)}"><h2 class="section-title">当前阶段重点和下一步建议</h2><div class="focus-grid"><div><h3>当前阶段重点</h3><p>${escapeHtml(currentTimelineItem?.label ?? emptySectionPlaceholder)}</p></div><div><h3>下一步建议</h3><p>${escapeHtml(content.nextStageFocus)}</p></div></div></section>`;
+        if (
+          shouldPairInformationSections &&
+          (key === "basicInfo" || key === "materialCollection")
+        ) {
+          if (renderedInformationPair) return "";
+          renderedInformationPair = true;
+          return `<div class="paired-sections">${renderReportModule("basicInfo")}${renderReportModule("materialCollection")}</div>`;
         }
-        if (key === "summary") {
-          return `<section class="${sectionClass(key)}" aria-label="关键摘要"><h2 class="section-title">关键摘要</h2><div class="metrics"><div class="metric">材料收集完整度<strong>${escapeHtml(metricSummary.materialText)}</strong><div class="progress"><span style="width:${metricSummary.materialPercent}%"></span></div></div><div class="metric">核心学术信息<strong>${escapeHtml(metricSummary.academicText)}</strong></div><div class="metric">当前就读学校<strong>${escapeHtml(metricSummary.school)}</strong></div></div></section>`;
-        }
-        if (key === "timeline") {
-          return `<section class="${sectionClass(key)}"><h2 class="section-title">${escapeHtml(config.moduleTitles.timeline)}</h2><ol class="timeline">${timelineHtml}</ol></section>`;
-        }
-        if (key === "basicInfo") {
-          return `<section class="${sectionClass(key)}"><h2 class="section-title">基础信息</h2><table>${infoRowsHtml}</table></section>`;
-        }
-        if (key === "materialCollection") {
-          return `<section class="${sectionClass(key)}"><h2 class="section-title">材料收集</h2><table><thead><tr><th>材料项目</th><th>状态</th><th>备注</th></tr></thead><tbody>${materialRowsHtml}</tbody></table></section>`;
-        }
-        if (key === "completedThisMonth") {
-          return `<section class="${sectionClass(key)}"><h2 class="section-title">阶段性反馈</h2><p style="${getTextFormattingCss("completedThisMonth")}">${escapeHtml(content.completedThisMonth)}</p></section>`;
-        }
-        if (key === "nextMonthPlan") {
-          return `<section class="${sectionClass(key)}"><h2 class="section-title">下一阶段计划</h2><ul style="${getTextFormattingCss("nextMonthPlan")}">${nextActionsHtml}</ul></section>`;
-        }
-        if (key === "clientTasks") {
-          return `<section class="${sectionClass(key)}"><h2 class="section-title">需要学生/家庭配合</h2><p style="${getTextFormattingCss("clientTasks")}">${escapeHtml(content.clientTasks)}</p></section>`;
-        }
-        if (key === "attachments" && attachmentNames) {
-          return `<section class="${sectionClass(key)} attachments"><h2 class="section-title">附件</h2><p>${attachmentHtml}</p></section>`;
-        }
-        return "";
+        return renderReportModule(key);
       })
       .join("");
 
@@ -1821,6 +1845,8 @@ h1{margin:8px 0 10px;font-size:28px;line-height:1.2}
 .meta{display:flex;flex-wrap:wrap;gap:8px;font-size:12px;opacity:.9}
 .section-card{margin-top:12px;border:1px solid #e2e8f0;border-radius:16px;background:white;padding:14px;box-shadow:0 2px 8px rgba(15,23,42,.04)}
 .section-card.highlighted{background:${theme.secondarySoftColor};border-color:${theme.accentColor};box-shadow:0 12px 28px rgba(15,23,42,.10)}
+.paired-sections{display:grid;grid-template-columns:minmax(0,1fr) minmax(0,1fr);align-items:stretch;gap:12px;margin-top:12px}
+.paired-sections .section-card{height:100%;margin-top:0;box-sizing:border-box}
 .focus-grid{display:grid;grid-template-columns:1fr 1fr;gap:12px}
 .focus-grid h3{margin:0 0 6px;color:${theme.titleColor};font-size:13px}
 .focus-grid p,.section-card p{margin:0;font-size:12px;line-height:1.8;white-space:pre-line}
@@ -1882,6 +1908,7 @@ ${renderedReportModules}
     const heroHeight = 238;
     const cardGap = 24;
     const initialContentY = heroY + heroHeight + 42;
+    const shouldPairInformationSections = modules.basicInfo && modules.materialCollection;
     const estimateWrappedLines = (text: string, charactersPerLine: number) =>
       splitReportLines(text).reduce(
         (total, line) => total + Math.max(1, Math.ceil(line.length / charactersPerLine)),
@@ -1919,9 +1946,25 @@ ${renderedReportModules}
       }
       return Math.max(96, 72 + estimateWrappedLines(attachmentNames, 62) * 25);
     };
+    let estimatedInformationPair = false;
     const estimatedContentEnd =
       initialContentY +
       reportModuleOrder.reduce((total, key) => {
+        if (
+          shouldPairInformationSections &&
+          (key === "basicInfo" || key === "materialCollection")
+        ) {
+          if (estimatedInformationPair) return total;
+          estimatedInformationPair = true;
+          return (
+            total +
+            Math.max(
+              estimateCardHeight("basicInfo"),
+              estimateCardHeight("materialCollection"),
+            ) +
+            cardGap
+          );
+        }
         const height = estimateCardHeight(key);
         return total + (height > 0 ? height + cardGap : 0);
       }, 0);
@@ -2098,7 +2141,147 @@ ${renderedReportModules}
       y += height + 24;
     }
 
+    const basicInfoRows =
+      studentInfoRows.length > 0
+        ? studentInfoRows
+        : [{ label: "基础信息", value: emptySectionPlaceholder }];
+    const collectionRows =
+      materialRows.length > 0
+        ? materialRows
+        : [
+            {
+              item: "材料收集",
+              status: "na" as MaterialStatusKey,
+              statusLabel: emptySectionPlaceholder,
+              remark: emptySectionPlaceholder,
+            },
+          ];
+
+    function drawBasicInfoContent(cardY: number, cardX: number, cardWidth: number) {
+      const compact = cardWidth < 700;
+      const labelWidth = compact ? 126 : 172;
+      canvasContext.fillStyle = theme.titleColor;
+      canvasContext.font = `bold ${compact ? 21 : 23}px Arial, "PingFang SC", "Microsoft YaHei", sans-serif`;
+      canvasContext.fillText("基础信息", cardX + 18, cardY + 36);
+      basicInfoRows.forEach((row, index) => {
+        const rowY = cardY + 76 + index * 30;
+        canvasContext.fillStyle = theme.mutedTextColor;
+        canvasContext.font = `${compact ? 15 : 17}px Arial, "PingFang SC", "Microsoft YaHei", sans-serif`;
+        drawWrappedText(
+          canvasContext,
+          row.label,
+          cardX + 18,
+          rowY,
+          labelWidth - 18,
+          20,
+        );
+        const underline = applyCanvasTextFormatting(
+          "studentBasicInfo",
+          compact ? 15 : 17,
+        );
+        drawWrappedText(
+          canvasContext,
+          row.value,
+          cardX + labelWidth,
+          rowY,
+          cardWidth - labelWidth - 18,
+          20,
+          underline,
+        );
+      });
+    }
+
+    function drawMaterialCollectionContent(
+      cardY: number,
+      cardX: number,
+      cardWidth: number,
+    ) {
+      const compact = cardWidth < 700;
+      const innerWidth = cardWidth - 36;
+      const itemX = cardX + 18;
+      const statusX = itemX + innerWidth * 0.43;
+      const remarkX = itemX + innerWidth * 0.66;
+      canvasContext.fillStyle = theme.titleColor;
+      canvasContext.font = `bold ${compact ? 21 : 23}px Arial, "PingFang SC", "Microsoft YaHei", sans-serif`;
+      canvasContext.fillText("材料收集", cardX + 18, cardY + 36);
+      canvasContext.fillStyle = theme.mutedTextColor;
+      canvasContext.font = `bold ${compact ? 14 : 16}px Arial, "PingFang SC", "Microsoft YaHei", sans-serif`;
+      canvasContext.fillText("材料项目", itemX, cardY + 70);
+      canvasContext.fillText("状态", statusX, cardY + 70);
+      canvasContext.fillText("备注", remarkX, cardY + 70);
+      collectionRows.forEach((row, index) => {
+        const rowY = cardY + 102 + index * 28;
+        const underline = applyCanvasTextFormatting(
+          "materialCollectionStatus",
+          compact ? 14 : 16,
+        );
+        drawWrappedText(
+          canvasContext,
+          row.item,
+          itemX,
+          rowY,
+          statusX - itemX - 10,
+          19,
+          underline,
+        );
+        canvasContext.fillStyle = statusStyles[row.status].color;
+        canvasContext.font = `bold ${compact ? 13 : 15}px Arial, "PingFang SC", "Microsoft YaHei", sans-serif`;
+        canvasContext.fillText(row.statusLabel, statusX, rowY);
+        const remarkUnderline = applyCanvasTextFormatting(
+          "materialCollectionStatus",
+          compact ? 13 : 15,
+        );
+        drawWrappedText(
+          canvasContext,
+          row.remark,
+          remarkX,
+          rowY,
+          cardX + cardWidth - remarkX - 18,
+          19,
+          remarkUnderline,
+        );
+      });
+    }
+
+    let renderedCanvasInformationPair = false;
     reportModuleOrder.forEach((key) => {
+      if (
+        shouldPairInformationSections &&
+        (key === "basicInfo" || key === "materialCollection")
+      ) {
+        if (renderedCanvasInformationPair) return;
+        renderedCanvasInformationPair = true;
+        const pairGap = 20;
+        const pairWidth = (contentWidth - pairGap) / 2;
+        const pairHeight = Math.max(
+          estimateCardHeight("basicInfo"),
+          estimateCardHeight("materialCollection"),
+        );
+        drawRoundedBox(
+          contentX,
+          y,
+          pairWidth,
+          pairHeight,
+          highlightedModules.basicInfo ? theme.secondarySoftColor : "#ffffff",
+          highlightedModules.basicInfo ? theme.accentColor : "#e2e8f0",
+        );
+        const materialCardX = contentX + pairWidth + pairGap;
+        drawRoundedBox(
+          materialCardX,
+          y,
+          pairWidth,
+          pairHeight,
+          highlightedModules.materialCollection
+            ? theme.secondarySoftColor
+            : "#ffffff",
+          highlightedModules.materialCollection ? theme.accentColor : "#e2e8f0",
+        );
+        drawBasicInfoContent(y, contentX, pairWidth);
+        drawMaterialCollectionContent(y, materialCardX, pairWidth);
+        y += pairHeight + cardGap;
+        return;
+      }
+
       if (key === "stageFocus") {
         drawReportCard(key, estimateCardHeight(key), (cardY) => {
           context.fillStyle = theme.titleColor;
@@ -2214,87 +2397,14 @@ ${renderedReportModules}
       }
 
       if (key === "basicInfo") {
-        const rows =
-          studentInfoRows.length > 0
-            ? studentInfoRows
-            : [{ label: "基础信息", value: emptySectionPlaceholder }];
         drawReportCard(key, estimateCardHeight(key), (cardY) => {
-          context.fillStyle = theme.titleColor;
-          context.font = 'bold 23px Arial, "PingFang SC", "Microsoft YaHei", sans-serif';
-          context.fillText("基础信息", contentX + 18, cardY + 36);
-          context.font = '17px Arial, "PingFang SC", "Microsoft YaHei", sans-serif';
-          rows.forEach((row, index) => {
-            const rowY = cardY + 76 + index * 30;
-            context.fillStyle = theme.mutedTextColor;
-            context.font = '17px Arial, "PingFang SC", "Microsoft YaHei", sans-serif';
-            context.fillText(row.label, contentX + 18, rowY);
-            const underline = applyCanvasTextFormatting("studentBasicInfo", 17);
-            drawWrappedText(
-              context,
-              row.value,
-              contentX + 190,
-              rowY,
-              contentWidth - 208,
-              22,
-              underline,
-            );
-          });
+          drawBasicInfoContent(cardY, contentX, contentWidth);
         });
       }
 
       if (key === "materialCollection") {
-        const rows =
-          materialRows.length > 0
-            ? materialRows
-            : [
-                {
-                  item: "材料收集",
-                  status: "na" as MaterialStatusKey,
-                  statusLabel: emptySectionPlaceholder,
-                  remark: emptySectionPlaceholder,
-                },
-              ];
         drawReportCard(key, estimateCardHeight(key), (cardY) => {
-          context.fillStyle = theme.titleColor;
-          context.font = 'bold 23px Arial, "PingFang SC", "Microsoft YaHei", sans-serif';
-          context.fillText("材料收集", contentX + 18, cardY + 36);
-          context.fillStyle = theme.mutedTextColor;
-          context.font = 'bold 16px Arial, "PingFang SC", "Microsoft YaHei", sans-serif';
-          context.fillText("材料项目", contentX + 18, cardY + 70);
-          context.fillText("状态", contentX + 360, cardY + 70);
-          context.fillText("备注", contentX + 520, cardY + 70);
-          rows.forEach((row, index) => {
-            const rowY = cardY + 102 + index * 28;
-            const underline = applyCanvasTextFormatting(
-              "materialCollectionStatus",
-              16,
-            );
-            drawWrappedText(
-              context,
-              row.item,
-              contentX + 18,
-              rowY,
-              320,
-              20,
-              underline,
-            );
-            context.fillStyle = statusStyles[row.status].color;
-            context.font = 'bold 15px Arial, "PingFang SC", "Microsoft YaHei", sans-serif';
-            context.fillText(row.statusLabel, contentX + 360, rowY);
-            const remarkUnderline = applyCanvasTextFormatting(
-              "materialCollectionStatus",
-              15,
-            );
-            drawWrappedText(
-              context,
-              row.remark,
-              contentX + 520,
-              rowY,
-              contentWidth - 540,
-              20,
-              remarkUnderline,
-            );
-          });
+          drawMaterialCollectionContent(cardY, contentX, contentWidth);
         });
       }
 
@@ -2447,15 +2557,17 @@ ${renderedReportModules}
       : { backgroundColor: "#ffffff" };
   }
 
-  function renderPreviewModule(key: ReportModuleKey) {
+  function renderPreviewModule(key: ReportModuleKey, paired = false) {
     if (!modules[key]) return null;
     if (key === "attachments" && !attachmentNames) return null;
 
-    const sectionShellClass =
-      "mx-4 my-3 rounded-2xl border border-slate-200 p-3 text-xs leading-5 shadow-[0_2px_8px_rgba(15,23,42,0.04)]";
+    const sectionShellClass = paired
+      ? "h-full min-w-0 rounded-2xl border border-slate-200 p-3 text-xs leading-5 shadow-[0_2px_8px_rgba(15,23,42,0.04)]"
+      : "mx-4 my-3 rounded-2xl border border-slate-200 p-3 text-xs leading-5 shadow-[0_2px_8px_rgba(15,23,42,0.04)]";
     const sectionHeaderClass = "text-sm font-semibold";
     const sectionProps = {
       "data-highlighted": highlightedModules[key] ? "true" : "false",
+      "data-layout": paired ? "half" : "full",
       "data-testid": `report-section-${key}`,
       className: sectionShellClass,
       style: getPreviewSectionStyle(key),
@@ -2729,6 +2841,33 @@ ${renderedReportModules}
         </div>
       </section>
     );
+  }
+
+  function renderPreviewModules() {
+    const shouldPairInformationSections = modules.basicInfo && modules.materialCollection;
+    let renderedInformationPair = false;
+
+    return reportModuleOrder.map((key) => {
+      if (
+        shouldPairInformationSections &&
+        (key === "basicInfo" || key === "materialCollection")
+      ) {
+        if (renderedInformationPair) return null;
+        renderedInformationPair = true;
+        return (
+          <div
+            className="mx-4 my-3 grid grid-cols-2 items-stretch gap-3"
+            data-testid="basic-material-pair"
+            key="basic-material-pair"
+          >
+            {renderPreviewModule("basicInfo", true)}
+            {renderPreviewModule("materialCollection", true)}
+          </div>
+        );
+      }
+
+      return renderPreviewModule(key);
+    });
   }
 
   return (
@@ -3440,7 +3579,7 @@ ${renderedReportModules}
               </div>
             </section>
 
-            {reportModuleOrder.map((key) => renderPreviewModule(key))}
+            {renderPreviewModules()}
 
           </article>
 
