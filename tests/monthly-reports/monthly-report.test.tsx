@@ -526,6 +526,20 @@ describe("monthly reports page", () => {
     });
   });
 
+  it("preserves next-stage plan line breaks without adding list bullets", () => {
+    render(<MonthlyReportsPage />);
+
+    fireEvent.change(screen.getByLabelText("下一阶段计划"), {
+      target: { value: "确认申请系统\n补充推荐信材料" },
+    });
+
+    const planSection = screen.getByTestId("report-section-nextMonthPlan");
+    expect(planSection.querySelector("ul")).not.toBeInTheDocument();
+    expect(planSection.querySelectorAll("p")).toHaveLength(2);
+    expect(planSection).toHaveTextContent("确认申请系统");
+    expect(planSection).not.toHaveTextContent("•");
+  });
+
   it("shows uploaded attachments in the attachment list and report preview", () => {
     render(<MonthlyReportsPage />);
 
@@ -1078,6 +1092,9 @@ describe("monthly reports page", () => {
     expect(exportedText).toContain("Application Progress Report");
     expect(exportedText).toContain("关键摘要");
     expect(exportedText).toContain("材料项目");
+    expect(exportedText).toContain('class="status-pill"');
+    expect(exportedText).toContain('class="plain-lines"');
+    expect(exportedText).not.toContain("•");
     expect(exportedText).toContain('class="paired-sections"');
     expect(exportedText).toContain('data-layout="half"');
     expect(exportedText).not.toContain("本阶段后续动作");

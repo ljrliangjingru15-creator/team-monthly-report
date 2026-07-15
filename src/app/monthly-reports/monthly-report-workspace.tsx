@@ -1773,7 +1773,7 @@ export function MonthlyReportWorkspace() {
             .join("")
         : `<tr><td>材料收集</td><td><span class="status-pill">${emptySectionPlaceholder}</span></td><td>${emptySectionPlaceholder}</td></tr>`;
     const nextActionsHtml = nextActionItems
-      .map((item) => `<li>${escapeHtml(item)}</li>`)
+      .map((item) => `<p>${escapeHtml(item)}</p>`)
       .join("");
     const attachmentHtml = escapeHtml(attachmentNames);
     const sectionClass = (key: ReportModuleKey) =>
@@ -1799,7 +1799,7 @@ export function MonthlyReportWorkspace() {
         return `<section class="${sectionClass(key)}"><h2 class="section-title">阶段性反馈</h2><p style="${getTextFormattingCss("completedThisMonth")}">${escapeHtml(content.completedThisMonth)}</p></section>`;
       }
       if (key === "nextMonthPlan") {
-        return `<section class="${sectionClass(key)}"><h2 class="section-title">下一阶段计划</h2><ul style="${getTextFormattingCss("nextMonthPlan")}">${nextActionsHtml}</ul></section>`;
+        return `<section class="${sectionClass(key)}"><h2 class="section-title">下一阶段计划</h2><div class="plain-lines" style="${getTextFormattingCss("nextMonthPlan")}">${nextActionsHtml}</div></section>`;
       }
       if (key === "clientTasks") {
         return `<section class="${sectionClass(key)}"><h2 class="section-title">需要学生/家庭配合</h2><p style="${getTextFormattingCss("clientTasks")}">${escapeHtml(content.clientTasks)}</p></section>`;
@@ -1869,6 +1869,7 @@ th,td{border-bottom:1px solid #e2e8f0;padding:8px 6px;text-align:left;vertical-a
 th{width:36%;color:${theme.mutedTextColor};font-weight:600}
 .status-pill{display:inline-flex;border-radius:999px;padding:4px 8px;background:#f1f5f9;color:#64748b;font-size:10px;font-weight:700;white-space:nowrap}
 .section-card ul{margin:0;padding-left:18px;font-size:12px;line-height:1.8}
+.plain-lines p{margin:0;font-size:12px;line-height:1.8;white-space:pre-line}
 </style>
 </head>
 <body>
@@ -1904,52 +1905,102 @@ ${renderedReportModules}
     }
 
     const canvasWidth = 1240;
+    const a4PageHeight = Math.floor((canvasWidth * 841.89) / 595.28);
     const heroY = 198;
-    const heroHeight = 238;
-    const cardGap = 24;
-    const initialContentY = heroY + heroHeight + 42;
     const shouldPairInformationSections = modules.basicInfo && modules.materialCollection;
     const estimateWrappedLines = (text: string, charactersPerLine: number) =>
       splitReportLines(text).reduce(
         (total, line) => total + Math.max(1, Math.ceil(line.length / charactersPerLine)),
         0,
       ) || 1;
-    const estimateCardHeight = (key: ReportModuleKey) => {
+    const estimateBasicRowHeight = (row: KeyValueRow, compact: boolean) => {
+      const valueLines = estimateWrappedLines(row.value, compact ? 18 : 30);
+      return Math.max(compact ? 24 : 30, valueLines * (compact ? 18 : 22) + 6);
+    };
+    const estimateMaterialRowHeight = (
+      row: MaterialReportRow,
+      compact: boolean,
+    ) => {
+      const itemLines = estimateWrappedLines(row.item, compact ? 14 : 26);
+      const remarkLines = estimateWrappedLines(row.remark, compact ? 10 : 20);
+      return Math.max(
+        compact ? 24 : 28,
+        Math.max(itemLines, remarkLines) * (compact ? 17 : 20) + 6,
+      );
+    };
+    const estimateCardHeight = (key: ReportModuleKey, compact = false) => {
       if (!modules[key]) return 0;
       if (key === "attachments" && !attachmentNames) return 0;
       if (key === "stageFocus") {
+        if (compact) {
+          return Math.max(
+            112,
+            70 + estimateWrappedLines(content.nextStageFocus, 44) * 20,
+          );
+        }
         return Math.max(150, 90 + estimateWrappedLines(content.nextStageFocus, 38) * 23);
       }
-      if (key === "summary") return 150;
+      if (key === "summary") return compact ? 116 : 150;
       if (key === "timeline") {
-        return 62 + Math.max(1, Math.ceil(timelineItems.length / 5)) * 88;
+        const rows = Math.max(1, Math.ceil(timelineItems.length / 5));
+        return compact ? 48 + rows * 62 : 62 + rows * 88;
       }
       if (key === "basicInfo") {
-        const rows = studentInfoRows.length || 1;
-        return 62 + rows * 30;
-      }
-      if (key === "materialCollection") {
-        const rows = materialRows.length || 1;
-        return 92 + rows * 28;
-      }
-      if (key === "completedThisMonth") {
-        return Math.max(136, 72 + estimateWrappedLines(advisorFeedback, 62) * 25);
-      }
-      if (key === "nextMonthPlan") {
-        return Math.max(
-          136,
-          72 + estimateWrappedLines(nextActionItems.map((item) => `• ${item}`).join("\n"), 62) * 25,
+        const rows =
+          studentInfoRows.length > 0
+            ? studentInfoRows
+            : [{ label: "基础信息", value: emptySectionPlaceholder }];
+        return (
+          (compact ? 58 : 62) +
+          rows.reduce(
+            (height, row) => height + estimateBasicRowHeight(row, compact),
+            0,
+          )
         );
       }
-      if (key === "clientTasks") {
-        return Math.max(122, 72 + estimateWrappedLines(content.clientTasks, 62) * 25);
+      if (key === "materialCollection") {
+        const rows =
+          materialRows.length > 0
+            ? materialRows
+            : [
+                {
+                  item: "材料收集",
+                  status: "na" as MaterialStatusKey,
+                  statusLabel: emptySectionPlaceholder,
+                  remark: emptySectionPlaceholder,
+                },
+              ];
+        return (
+          (compact ? 70 : 92) +
+          rows.reduce(
+            (height, row) => height + estimateMaterialRowHeight(row, compact),
+            0,
+          )
+        );
       }
-      return Math.max(96, 72 + estimateWrappedLines(attachmentNames, 62) * 25);
+      if (key === "completedThisMonth") {
+        return compact
+          ? Math.max(90, 54 + estimateWrappedLines(advisorFeedback, 70) * 21)
+          : Math.max(136, 72 + estimateWrappedLines(advisorFeedback, 62) * 25);
+      }
+      if (key === "nextMonthPlan") {
+        const nextPlanText = nextActionItems.join("\n");
+        return compact
+          ? Math.max(90, 54 + estimateWrappedLines(nextPlanText, 70) * 21)
+          : Math.max(136, 72 + estimateWrappedLines(nextPlanText, 62) * 25);
+      }
+      if (key === "clientTasks") {
+        return compact
+          ? Math.max(90, 54 + estimateWrappedLines(content.clientTasks, 70) * 21)
+          : Math.max(122, 72 + estimateWrappedLines(content.clientTasks, 62) * 25);
+      }
+      return compact
+        ? Math.max(82, 54 + estimateWrappedLines(attachmentNames, 70) * 21)
+        : Math.max(96, 72 + estimateWrappedLines(attachmentNames, 62) * 25);
     };
-    let estimatedInformationPair = false;
-    const estimatedContentEnd =
-      initialContentY +
-      reportModuleOrder.reduce((total, key) => {
+    const estimateModulesHeight = (compact: boolean, gap: number) => {
+      let estimatedInformationPair = false;
+      return reportModuleOrder.reduce((total, key) => {
         if (
           shouldPairInformationSections &&
           (key === "basicInfo" || key === "materialCollection")
@@ -1959,18 +2010,31 @@ ${renderedReportModules}
           return (
             total +
             Math.max(
-              estimateCardHeight("basicInfo"),
-              estimateCardHeight("materialCollection"),
+              estimateCardHeight("basicInfo", compact),
+              estimateCardHeight("materialCollection", compact),
             ) +
-            cardGap
+            gap
           );
         }
-        const height = estimateCardHeight(key);
-        return total + (height > 0 ? height + cardGap : 0);
+        const height = estimateCardHeight(key, compact);
+        return total + (height > 0 ? height + gap : 0);
       }, 0);
+    };
+    const normalHeroHeight = 238;
+    const normalContentEnd =
+      heroY + normalHeroHeight + 42 + estimateModulesHeight(false, 24);
+    const useCompactExport = normalContentEnd > a4PageHeight - 70;
+    const heroHeight = useCompactExport ? 184 : normalHeroHeight;
+    const cardGap = useCompactExport ? 14 : 24;
+    const initialContentY = heroY + heroHeight + (useCompactExport ? 24 : 42);
+    const estimatedContentEnd =
+      initialContentY + estimateModulesHeight(useCompactExport, cardGap);
     const canvas = document.createElement("canvas");
     canvas.width = canvasWidth;
-    canvas.height = Math.max(1754, Math.ceil(estimatedContentEnd + 90));
+    canvas.height = Math.max(
+      a4PageHeight,
+      Math.ceil(estimatedContentEnd + (useCompactExport ? 50 : 90)),
+    );
     const context = canvas.getContext("2d");
     if (!context) {
       return new Blob([buildReportHtml()], { type: "text/html;charset=utf-8" });
@@ -2105,12 +2169,20 @@ ${renderedReportModules}
     context.restore();
 
     context.fillStyle = "rgba(255,255,255,0.82)";
-    context.font = 'bold 18px Arial, "PingFang SC", "Microsoft YaHei", sans-serif';
-    context.fillText("Application Progress Report", contentX + 32, heroY + 46);
+    context.font = `bold ${useCompactExport ? 15 : 18}px Arial, "PingFang SC", "Microsoft YaHei", sans-serif`;
+    context.fillText(
+      "Application Progress Report",
+      contentX + 32,
+      heroY + (useCompactExport ? 36 : 46),
+    );
     context.fillStyle = "#ffffff";
-    context.font = 'bold 42px Arial, "PingFang SC", "Microsoft YaHei", sans-serif';
-    context.fillText(reportTitle, contentX + 32, heroY + 102);
-    context.font = '22px Arial, "PingFang SC", "Microsoft YaHei", sans-serif';
+    context.font = `bold ${useCompactExport ? 36 : 42}px Arial, "PingFang SC", "Microsoft YaHei", sans-serif`;
+    context.fillText(
+      reportTitle,
+      contentX + 32,
+      heroY + (useCompactExport ? 82 : 102),
+    );
+    context.font = `${useCompactExport ? 18 : 22}px Arial, "PingFang SC", "Microsoft YaHei", sans-serif`;
     const metaText = [
       modules.studentName ? `学生姓名：${content.studentName}` : "",
       modules.season ? `申请季度：${content.season}` : "",
@@ -2119,7 +2191,11 @@ ${renderedReportModules}
     ]
       .filter(Boolean)
       .join("   ");
-    context.fillText(metaText, contentX + 32, heroY + 148);
+    context.fillText(
+      metaText,
+      contentX + 32,
+      heroY + (useCompactExport ? 126 : 148),
+    );
 
     let y = initialContentY;
     function drawReportCard(
@@ -2138,7 +2214,7 @@ ${renderedReportModules}
         highlightedModules[key] ? theme.accentColor : "#e2e8f0",
       );
       drawContent(y);
-      y += height + 24;
+      y += height + cardGap;
     }
 
     const basicInfoRows =
@@ -2160,13 +2236,16 @@ ${renderedReportModules}
     function drawBasicInfoContent(cardY: number, cardX: number, cardWidth: number) {
       const compact = cardWidth < 700;
       const labelWidth = compact ? 126 : 172;
+      const titleY = cardY + (useCompactExport ? 30 : 36);
+      const firstRowY = cardY + (useCompactExport ? 58 : 76);
+      const rowStride = useCompactExport ? 24 : 30;
       canvasContext.fillStyle = theme.titleColor;
-      canvasContext.font = `bold ${compact ? 21 : 23}px Arial, "PingFang SC", "Microsoft YaHei", sans-serif`;
-      canvasContext.fillText("基础信息", cardX + 18, cardY + 36);
-      basicInfoRows.forEach((row, index) => {
-        const rowY = cardY + 76 + index * 30;
+      canvasContext.font = `bold ${useCompactExport ? 19 : compact ? 21 : 23}px Arial, "PingFang SC", "Microsoft YaHei", sans-serif`;
+      canvasContext.fillText("基础信息", cardX + 18, titleY);
+      let rowY = firstRowY;
+      basicInfoRows.forEach((row) => {
         canvasContext.fillStyle = theme.mutedTextColor;
-        canvasContext.font = `${compact ? 15 : 17}px Arial, "PingFang SC", "Microsoft YaHei", sans-serif`;
+        canvasContext.font = `${useCompactExport ? 13 : compact ? 15 : 17}px Arial, "PingFang SC", "Microsoft YaHei", sans-serif`;
         drawWrappedText(
           canvasContext,
           row.label,
@@ -2177,7 +2256,7 @@ ${renderedReportModules}
         );
         const underline = applyCanvasTextFormatting(
           "studentBasicInfo",
-          compact ? 15 : 17,
+          useCompactExport ? 13 : compact ? 15 : 17,
         );
         drawWrappedText(
           canvasContext,
@@ -2187,6 +2266,10 @@ ${renderedReportModules}
           cardWidth - labelWidth - 18,
           20,
           underline,
+        );
+        rowY += Math.max(
+          rowStride,
+          estimateBasicRowHeight(row, useCompactExport),
         );
       });
     }
@@ -2201,19 +2284,23 @@ ${renderedReportModules}
       const itemX = cardX + 18;
       const statusX = itemX + innerWidth * 0.43;
       const remarkX = itemX + innerWidth * 0.66;
+      const titleY = cardY + (useCompactExport ? 30 : 36);
+      const headerY = cardY + (useCompactExport ? 54 : 70);
+      const firstRowY = cardY + (useCompactExport ? 78 : 102);
+      const rowStride = useCompactExport ? 24 : 28;
       canvasContext.fillStyle = theme.titleColor;
-      canvasContext.font = `bold ${compact ? 21 : 23}px Arial, "PingFang SC", "Microsoft YaHei", sans-serif`;
-      canvasContext.fillText("材料收集", cardX + 18, cardY + 36);
+      canvasContext.font = `bold ${useCompactExport ? 19 : compact ? 21 : 23}px Arial, "PingFang SC", "Microsoft YaHei", sans-serif`;
+      canvasContext.fillText("材料收集", cardX + 18, titleY);
       canvasContext.fillStyle = theme.mutedTextColor;
-      canvasContext.font = `bold ${compact ? 14 : 16}px Arial, "PingFang SC", "Microsoft YaHei", sans-serif`;
-      canvasContext.fillText("材料项目", itemX, cardY + 70);
-      canvasContext.fillText("状态", statusX, cardY + 70);
-      canvasContext.fillText("备注", remarkX, cardY + 70);
-      collectionRows.forEach((row, index) => {
-        const rowY = cardY + 102 + index * 28;
+      canvasContext.font = `bold ${useCompactExport ? 12 : compact ? 14 : 16}px Arial, "PingFang SC", "Microsoft YaHei", sans-serif`;
+      canvasContext.fillText("材料项目", itemX, headerY);
+      canvasContext.fillText("状态", statusX, headerY);
+      canvasContext.fillText("备注", remarkX, headerY);
+      let rowY = firstRowY;
+      collectionRows.forEach((row) => {
         const underline = applyCanvasTextFormatting(
           "materialCollectionStatus",
-          compact ? 14 : 16,
+          useCompactExport ? 12 : compact ? 14 : 16,
         );
         drawWrappedText(
           canvasContext,
@@ -2224,12 +2311,30 @@ ${renderedReportModules}
           19,
           underline,
         );
-        canvasContext.fillStyle = statusStyles[row.status].color;
-        canvasContext.font = `bold ${compact ? 13 : 15}px Arial, "PingFang SC", "Microsoft YaHei", sans-serif`;
+        const statusStyle = statusStyles[row.status];
+        const statusFontSize = useCompactExport ? 11 : compact ? 13 : 15;
+        canvasContext.font = `bold ${statusFontSize}px Arial, "PingFang SC", "Microsoft YaHei", sans-serif`;
+        const pillHeight = useCompactExport ? 18 : 22;
+        const pillWidth = Math.min(
+          remarkX - statusX - 8,
+          canvasContext.measureText(row.statusLabel).width +
+            (useCompactExport ? 14 : 18),
+        );
+        drawRoundedBox(
+          statusX - 4,
+          rowY - pillHeight + 4,
+          pillWidth,
+          pillHeight,
+          statusStyle.bg,
+          statusStyle.bg,
+          pillHeight / 2,
+        );
+        canvasContext.fillStyle = statusStyle.color;
+        canvasContext.font = `bold ${statusFontSize}px Arial, "PingFang SC", "Microsoft YaHei", sans-serif`;
         canvasContext.fillText(row.statusLabel, statusX, rowY);
         const remarkUnderline = applyCanvasTextFormatting(
           "materialCollectionStatus",
-          compact ? 13 : 15,
+          useCompactExport ? 11 : compact ? 13 : 15,
         );
         drawWrappedText(
           canvasContext,
@@ -2239,6 +2344,10 @@ ${renderedReportModules}
           cardX + cardWidth - remarkX - 18,
           19,
           remarkUnderline,
+        );
+        rowY += Math.max(
+          rowStride,
+          estimateMaterialRowHeight(row, useCompactExport),
         );
       });
     }
@@ -2254,8 +2363,8 @@ ${renderedReportModules}
         const pairGap = 20;
         const pairWidth = (contentWidth - pairGap) / 2;
         const pairHeight = Math.max(
-          estimateCardHeight("basicInfo"),
-          estimateCardHeight("materialCollection"),
+          estimateCardHeight("basicInfo", useCompactExport),
+          estimateCardHeight("materialCollection", useCompactExport),
         );
         drawRoundedBox(
           contentX,
@@ -2283,39 +2392,55 @@ ${renderedReportModules}
       }
 
       if (key === "stageFocus") {
-        drawReportCard(key, estimateCardHeight(key), (cardY) => {
+        drawReportCard(key, estimateCardHeight(key, useCompactExport), (cardY) => {
           context.fillStyle = theme.titleColor;
-          context.font = 'bold 24px Arial, "PingFang SC", "Microsoft YaHei", sans-serif';
-          context.fillText("当前阶段重点和下一步建议", contentX + 18, cardY + 36);
-          context.font = 'bold 18px Arial, "PingFang SC", "Microsoft YaHei", sans-serif';
-          context.fillText("当前阶段重点", contentX + 18, cardY + 78);
-          context.fillText("下一步建议", contentX + contentWidth / 2 + 12, cardY + 78);
+          context.font = `bold ${useCompactExport ? 20 : 24}px Arial, "PingFang SC", "Microsoft YaHei", sans-serif`;
+          context.fillText(
+            "当前阶段重点和下一步建议",
+            contentX + 18,
+            cardY + (useCompactExport ? 30 : 36),
+          );
+          context.font = `bold ${useCompactExport ? 15 : 18}px Arial, "PingFang SC", "Microsoft YaHei", sans-serif`;
+          context.fillText(
+            "当前阶段重点",
+            contentX + 18,
+            cardY + (useCompactExport ? 60 : 78),
+          );
+          context.fillText(
+            "下一步建议",
+            contentX + contentWidth / 2 + 12,
+            cardY + (useCompactExport ? 60 : 78),
+          );
           context.fillStyle = theme.textColor;
-          context.font = '17px Arial, "PingFang SC", "Microsoft YaHei", sans-serif';
+          context.font = `${useCompactExport ? 14 : 17}px Arial, "PingFang SC", "Microsoft YaHei", sans-serif`;
           drawWrappedText(
             context,
             currentTimelineItem?.label ?? emptySectionPlaceholder,
             contentX + 18,
-            cardY + 106,
+            cardY + (useCompactExport ? 82 : 106),
             contentWidth / 2 - 36,
-            23,
+            useCompactExport ? 20 : 23,
           );
           drawWrappedText(
             context,
             content.nextStageFocus,
             contentX + contentWidth / 2 + 12,
-            cardY + 106,
+            cardY + (useCompactExport ? 82 : 106),
             contentWidth / 2 - 36,
-            23,
+            useCompactExport ? 20 : 23,
           );
         });
       }
 
       if (key === "summary") {
-        drawReportCard(key, estimateCardHeight(key), (cardY) => {
+        drawReportCard(key, estimateCardHeight(key, useCompactExport), (cardY) => {
           context.fillStyle = theme.titleColor;
-          context.font = 'bold 24px Arial, "PingFang SC", "Microsoft YaHei", sans-serif';
-          context.fillText("关键摘要", contentX + 18, cardY + 36);
+          context.font = `bold ${useCompactExport ? 20 : 24}px Arial, "PingFang SC", "Microsoft YaHei", sans-serif`;
+          context.fillText(
+            "关键摘要",
+            contentX + 18,
+            cardY + (useCompactExport ? 30 : 36),
+          );
           const metricWidth = (contentWidth - 60) / 3;
           [
             ["材料收集完整度", metricSummary.materialText],
@@ -2323,22 +2448,29 @@ ${renderedReportModules}
             ["当前就读学校", metricSummary.school],
           ].forEach(([label, value], index) => {
             const x = contentX + 18 + index * (metricWidth + 12);
-            const metricY = cardY + 58;
+            const metricY = cardY + (useCompactExport ? 42 : 58);
             drawRoundedBox(
               x,
               metricY,
               metricWidth,
-              74,
+              useCompactExport ? 60 : 74,
               index === 0 ? theme.primarySoftColor : "#ffffff",
               "#e2e8f0",
               12,
             );
             context.fillStyle = theme.mutedTextColor;
-            context.font = '16px Arial, "PingFang SC", "Microsoft YaHei", sans-serif';
-            context.fillText(label, x + 14, metricY + 26);
+            context.font = `${useCompactExport ? 13 : 16}px Arial, "PingFang SC", "Microsoft YaHei", sans-serif`;
+            context.fillText(label, x + 14, metricY + (useCompactExport ? 21 : 26));
             context.fillStyle = theme.titleColor;
-            context.font = 'bold 21px Arial, "PingFang SC", "Microsoft YaHei", sans-serif';
-            drawWrappedText(context, value, x + 14, metricY + 54, metricWidth - 28, 24);
+            context.font = `bold ${useCompactExport ? 18 : 21}px Arial, "PingFang SC", "Microsoft YaHei", sans-serif`;
+            drawWrappedText(
+              context,
+              value,
+              x + 14,
+              metricY + (useCompactExport ? 45 : 54),
+              metricWidth - 28,
+              useCompactExport ? 20 : 24,
+            );
           });
         });
       }
@@ -2346,20 +2478,29 @@ ${renderedReportModules}
       if (key === "timeline") {
         const timelineColumns = 5;
         const timelineRows = Math.max(1, Math.ceil(timelineItems.length / timelineColumns));
-        const timelineHeight = 62 + timelineRows * 88;
+        const timelineHeight = useCompactExport
+          ? 48 + timelineRows * 62
+          : 62 + timelineRows * 88;
         drawReportCard(key, timelineHeight, (cardY) => {
           context.fillStyle = theme.titleColor;
-          context.font = 'bold 24px Arial, "PingFang SC", "Microsoft YaHei", sans-serif';
-          context.fillText(config.moduleTitles.timeline, contentX + 18, cardY + 36);
+          context.font = `bold ${useCompactExport ? 20 : 24}px Arial, "PingFang SC", "Microsoft YaHei", sans-serif`;
+          context.fillText(
+            config.moduleTitles.timeline,
+            contentX + 18,
+            cardY + (useCompactExport ? 30 : 36),
+          );
           const timelineBoxWidth = (contentWidth - 68) / timelineColumns;
           timelineItems.forEach((item, index) => {
             const x = contentX + 18 + (index % timelineColumns) * (timelineBoxWidth + 8);
-            const itemY = cardY + 56 + Math.floor(index / timelineColumns) * 88;
+            const itemY =
+              cardY +
+              (useCompactExport ? 42 : 56) +
+              Math.floor(index / timelineColumns) * (useCompactExport ? 62 : 88);
             drawRoundedBox(
               x,
               itemY,
               timelineBoxWidth,
-              70,
+              useCompactExport ? 52 : 70,
               item.status === "current" ? theme.primarySoftColor : "#f8fafc",
               item.status === "current" ? theme.primaryColor : "#e2e8f0",
               12,
@@ -2367,109 +2508,168 @@ ${renderedReportModules}
             if (item.note.trim()) {
               drawRoundedBox(
                 x + 10,
-                itemY + 8,
+                itemY + (useCompactExport ? 5 : 8),
                 timelineBoxWidth - 20,
-                18,
+                useCompactExport ? 15 : 18,
                 theme.secondarySoftColor,
                 theme.secondarySoftColor,
-                9,
+                useCompactExport ? 7.5 : 9,
               );
               context.fillStyle = theme.accentColor;
-              context.font = 'bold 11px Arial, "PingFang SC", "Microsoft YaHei", sans-serif';
-              drawWrappedText(context, item.note, x + 14, itemY + 21, timelineBoxWidth - 28, 14);
+              context.font = `bold ${useCompactExport ? 9 : 11}px Arial, "PingFang SC", "Microsoft YaHei", sans-serif`;
+              drawWrappedText(
+                context,
+                item.note,
+                x + 14,
+                itemY + (useCompactExport ? 16 : 21),
+                timelineBoxWidth - 28,
+                useCompactExport ? 11 : 14,
+              );
             }
             context.fillStyle = getTimelineColor(item.status);
             context.beginPath();
-            context.arc(x + 18, itemY + (item.note.trim() ? 40 : 20), 6, 0, Math.PI * 2);
+            context.arc(
+              x + (useCompactExport ? 15 : 18),
+              itemY +
+                (item.note.trim()
+                  ? useCompactExport
+                    ? 31
+                    : 40
+                  : useCompactExport
+                    ? 16
+                    : 20),
+              useCompactExport ? 4.5 : 6,
+              0,
+              Math.PI * 2,
+            );
             context.fill();
             context.fillStyle = theme.textColor;
-            context.font = '16px Arial, "PingFang SC", "Microsoft YaHei", sans-serif';
+            context.font = `${useCompactExport ? 13 : 16}px Arial, "PingFang SC", "Microsoft YaHei", sans-serif`;
             drawWrappedText(
               context,
               item.label,
-              x + 34,
-              itemY + (item.note.trim() ? 42 : 22),
-              timelineBoxWidth - 44,
-              20,
+              x + (useCompactExport ? 27 : 34),
+              itemY +
+                (item.note.trim()
+                  ? useCompactExport
+                    ? 33
+                    : 42
+                  : useCompactExport
+                    ? 18
+                    : 22),
+              timelineBoxWidth - (useCompactExport ? 35 : 44),
+              useCompactExport ? 16 : 20,
             );
           });
         });
       }
 
       if (key === "basicInfo") {
-        drawReportCard(key, estimateCardHeight(key), (cardY) => {
+        drawReportCard(key, estimateCardHeight(key, useCompactExport), (cardY) => {
           drawBasicInfoContent(cardY, contentX, contentWidth);
         });
       }
 
       if (key === "materialCollection") {
-        drawReportCard(key, estimateCardHeight(key), (cardY) => {
+        drawReportCard(key, estimateCardHeight(key, useCompactExport), (cardY) => {
           drawMaterialCollectionContent(cardY, contentX, contentWidth);
         });
       }
 
       if (key === "completedThisMonth") {
-        drawReportCard(key, estimateCardHeight(key), (cardY) => {
+        drawReportCard(key, estimateCardHeight(key, useCompactExport), (cardY) => {
           context.fillStyle = theme.titleColor;
-          context.font = 'bold 21px Arial, "PingFang SC", "Microsoft YaHei", sans-serif';
-          context.fillText("阶段性反馈", contentX + 18, cardY + 34);
-          const underline = applyCanvasTextFormatting("completedThisMonth", 17);
+          context.font = `bold ${useCompactExport ? 18 : 21}px Arial, "PingFang SC", "Microsoft YaHei", sans-serif`;
+          context.fillText(
+            "阶段性反馈",
+            contentX + 18,
+            cardY + (useCompactExport ? 30 : 34),
+          );
+          const underline = applyCanvasTextFormatting(
+            "completedThisMonth",
+            useCompactExport ? 14 : 17,
+          );
           drawWrappedText(
             context,
             advisorFeedback,
             contentX + 18,
-            cardY + 68,
+            cardY + (useCompactExport ? 54 : 68),
             contentWidth - 36,
-            25,
+            useCompactExport ? 21 : 25,
             underline,
           );
         });
       }
 
       if (key === "nextMonthPlan") {
-        drawReportCard(key, estimateCardHeight(key), (cardY) => {
+        drawReportCard(key, estimateCardHeight(key, useCompactExport), (cardY) => {
           context.fillStyle = theme.titleColor;
-          context.font = 'bold 21px Arial, "PingFang SC", "Microsoft YaHei", sans-serif';
-          context.fillText("下一阶段计划", contentX + 18, cardY + 34);
-          const underline = applyCanvasTextFormatting("nextMonthPlan", 17);
+          context.font = `bold ${useCompactExport ? 18 : 21}px Arial, "PingFang SC", "Microsoft YaHei", sans-serif`;
+          context.fillText(
+            "下一阶段计划",
+            contentX + 18,
+            cardY + (useCompactExport ? 30 : 34),
+          );
+          const underline = applyCanvasTextFormatting(
+            "nextMonthPlan",
+            useCompactExport ? 14 : 17,
+          );
           drawWrappedText(
             context,
-            nextActionItems.map((item) => `• ${item}`).join("\n"),
+            nextActionItems.join("\n"),
             contentX + 18,
-            cardY + 68,
+            cardY + (useCompactExport ? 54 : 68),
             contentWidth - 36,
-            25,
+            useCompactExport ? 21 : 25,
             underline,
           );
         });
       }
 
       if (key === "clientTasks") {
-        drawReportCard(key, estimateCardHeight(key), (cardY) => {
+        drawReportCard(key, estimateCardHeight(key, useCompactExport), (cardY) => {
           context.fillStyle = theme.titleColor;
-          context.font = 'bold 21px Arial, "PingFang SC", "Microsoft YaHei", sans-serif';
-          context.fillText("需要学生/家庭配合", contentX + 18, cardY + 34);
-          const underline = applyCanvasTextFormatting("clientTasks", 17);
+          context.font = `bold ${useCompactExport ? 18 : 21}px Arial, "PingFang SC", "Microsoft YaHei", sans-serif`;
+          context.fillText(
+            "需要学生/家庭配合",
+            contentX + 18,
+            cardY + (useCompactExport ? 30 : 34),
+          );
+          const underline = applyCanvasTextFormatting(
+            "clientTasks",
+            useCompactExport ? 14 : 17,
+          );
           drawWrappedText(
             context,
             content.clientTasks,
             contentX + 18,
-            cardY + 68,
+            cardY + (useCompactExport ? 54 : 68),
             contentWidth - 36,
-            25,
+            useCompactExport ? 21 : 25,
             underline,
           );
         });
       }
 
       if (key === "attachments") {
-        drawReportCard(key, estimateCardHeight(key), (cardY) => {
+        drawReportCard(key, estimateCardHeight(key, useCompactExport), (cardY) => {
           context.fillStyle = theme.titleColor;
-          context.font = 'bold 21px Arial, "PingFang SC", "Microsoft YaHei", sans-serif';
-          context.fillText("附件", contentX + 18, cardY + 34);
+          context.font = `bold ${useCompactExport ? 18 : 21}px Arial, "PingFang SC", "Microsoft YaHei", sans-serif`;
+          context.fillText(
+            "附件",
+            contentX + 18,
+            cardY + (useCompactExport ? 30 : 34),
+          );
           context.fillStyle = theme.textColor;
-          context.font = '17px Arial, "PingFang SC", "Microsoft YaHei", sans-serif';
-          drawWrappedText(context, `本次报告附件：${attachmentNames}`, contentX + 18, cardY + 68, contentWidth - 36, 25);
+          context.font = `${useCompactExport ? 14 : 17}px Arial, "PingFang SC", "Microsoft YaHei", sans-serif`;
+          drawWrappedText(
+            context,
+            `本次报告附件：${attachmentNames}`,
+            contentX + 18,
+            cardY + (useCompactExport ? 54 : 68),
+            contentWidth - 36,
+            useCompactExport ? 21 : 25,
+          );
         });
       }
     });
@@ -2501,7 +2701,7 @@ ${renderedReportModules}
     const scale = pageWidth / image.width;
     const width = image.width * scale;
     const height = image.height * scale;
-    const pageCount = Math.max(1, Math.ceil(height / pageHeight));
+    const pageCount = Math.max(1, Math.ceil((height - 0.5) / pageHeight));
 
     for (let pageIndex = 0; pageIndex < pageCount; pageIndex += 1) {
       const page = pdf.addPage([pageWidth, pageHeight]);
@@ -2800,14 +3000,14 @@ ${renderedReportModules}
             <h3 className={sectionHeaderClass} style={{ color: theme.titleColor }}>
               下一阶段计划
             </h3>
-            <ul
-              className="mt-2 list-disc space-y-1 pl-4"
+            <div
+              className="mt-2 space-y-1"
               style={getTextFormattingStyle("nextMonthPlan")}
             >
               {nextActionItems.map((item) => (
-                <li key={item}>{item}</li>
+                <p className="whitespace-pre-line" key={item}>{item}</p>
               ))}
-            </ul>
+            </div>
           </div>
         </section>
       );
