@@ -18,3 +18,5 @@ tsconfig.tsbuildinfo
 start-*.command
 skills/
 offline/vendor/
+.vercel
+.env*
