@@ -1,56 +1,72 @@
-# Monthly Report Export Design QA
+# Monthly Report Reference-Style Design QA
 
-- Source visual truth: `/var/folders/02/5h_prj010ls_vkh9c78kpshm0000gn/T/codex-clipboard-61b85627-ac38-44de-b94f-8bd4ef34c6e3.png`
-- Browser-rendered PNG export: `/Users/jingru/Downloads/测试学生甲_美国本科新生_2027秋_反馈报告_20260707 (2).png`
-- Basic-information spacing source PDF: `/Users/jingru/Library/Containers/com.tencent.xinWeChat/Data/Documents/xwechat_files/wxid_0583215832012_b839/temp/drag/余浩轩_美国本科新生_2027秋_反馈报告_20260707 (12).pdf`
-- Post-fix basic-information PNG: `/Users/jingru/Downloads/测试学生甲_美国本科新生_2027秋_反馈报告_20260707 (3).png`
-- Stress-test PDF export: `/Users/jingru/Downloads/测试学生甲_美国本科新生_2027秋_反馈报告_20260707 (3).pdf`
-- Rendered stress-test PDF page: `/tmp/monthly-report-stress-page-1.png`
-- Combined comparison: `/Users/jingru/Documents/申请进度管理/design-qa-compact-comparison-2026-07-15.png`
-- Browser viewport: 1280 x 720
-- State: six material rows with mixed statuses, multiline stage feedback, two-line next-stage plan, and five-line family cooperation content
+- Source visual truth: `/var/folders/02/5h_prj010ls_vkh9c78kpshm0000gn/T/codex-clipboard-d129233b-b1ea-4988-8865-fd03e5bfbff4.png`
+- Final browser-rendered PNG: `/Users/jingru/Downloads/测试学生甲_美国本科新生_2027秋_反馈报告_20260716 (8).png`
+- Final browser-rendered PDF: `/Users/jingru/Downloads/测试学生甲_美国本科新生_2027秋_反馈报告_20260716 (8).pdf`
+- Full comparison: `/tmp/reference-style-final-comparison-20260716.png`
+- Header comparison: `/tmp/reference-style-final-header-comparison-20260716.png`
+- Body comparison: `/tmp/reference-style-final-body-comparison-20260716.png`
+- Export size: 1240 x 1754 px; A4 PDF, one page for representative content
+- Browser state: US undergraduate freshman, six basic-information rows, six mixed-status material rows
 
-**Full-view comparison evidence**
+## Fidelity Review
 
-The supplied problem screenshot and the final one-page stress-test PDF render were normalized to the same height and placed side by side in the combined comparison. The final export keeps the same report hierarchy while removing excessive hero, timeline-node, section, and card spacing. The complete stress-test content fits on one A4 page with remaining whitespace at the bottom instead of splitting a text card across pages.
+- Layout: the white branded header, large report title, pale mint student rail, vertical timeline, focus panel, summary cards, materials table, highlighted feedback card, and unframed action sections match the supplied reference structure.
+- Typography: title, metadata, section headings, metrics, table rows, and narrative copy retain clear hierarchy and remain readable at A4 scale.
+- Spacing: representative content and the 19-node US graduate timeline both fit one page; unused space remains at the bottom instead of creating gaps between visible modules.
+- Colors: all nine application types retain their own theme tokens while sharing this layout. Material statuses keep consistent completed, active, pending, later, blocked, and not-applicable capsules.
+- Content: report title, date, editable section titles, multiline text, selected-range formatting, timeline notes, highlights, module order, and visibility rules are preserved.
+- Assets: the supplied New Oriental logo renders sharply in preview, PNG, and PDF. Existing Lucide icons are used consistently with the application's icon system.
 
-**Focused region comparison evidence**
+## Pagination Review
 
-- Material statuses render as filled rounded capsules in Canvas PNG and PDF output, matching preview semantics.
-- Timeline nodes use shorter boxes and row spacing without clipping labels.
-- Stage feedback and family cooperation cards expand according to wrapped-line count.
-- The next-stage plan preserves two input lines and does not add bullets.
-- Material and basic-information rows use adaptive row heights for longer values and remarks.
-- Basic-information row height uses measured Canvas text width. `Ready Global Academy` remains a one-line value, so it no longer creates a false blank row before language scores.
-- Selected-range color, bold, and underline are represented as styled text segments and shared by preview, HTML, PNG, and PDF rendering.
+- PNG uses the report's natural height and extends downward without clipping.
+- PDF prioritizes page breaks before modules, rows, timeline nodes, and manually separated narrative lines.
+- A 36-line stage-feedback stress test exported to three A4 pages with complete continuation text; no line or following module was lost.
+- The page counter updates from the actual export layout and returns to one page for the representative sample.
 
-**Required fidelity surfaces**
+## Template Coverage
 
-- Fonts and typography: Existing font stack and hierarchy are preserved; compact mode reduces export font sizes only when the normal estimate exceeds one A4 page.
-- Spacing and layout rhythm: Hero height, inter-card gaps, timeline boxes, and text-card minimum heights compress only under page pressure.
-- Colors and visual tokens: Status capsule background and text colors use the same `statusStyles` tokens as the preview.
-- Image quality and asset fidelity: The supplied New Oriental logo remains sharp and correctly proportioned.
-- Copy and content: Multiline text remains intact; no synthetic bullets are added.
+All nine application types were switched in the browser and verified for matching type, theme, department, timeline, preview, and default one-page export height:
 
-**Findings**
+1. 美国本科新生
+2. 美国本科转学
+3. 美国中学
+4. 加拿大中学
+5. 加拿大本科
+6. 美国硕博
+7. 加拿大硕博
+8. 综合评价申请
+9. 中外合办申请
 
-- No actionable P0, P1, or P2 mismatch remains for the reported export issues.
-- [P3] Extremely long reports will still use multiple pages by design. The adaptive sizing prevents row overlap, and overflow continues on later PDF pages rather than being discarded.
+## Verification
 
-**Primary interactions tested**
+- Focused monthly-report tests: 53 passed.
+- Representative PNG: 1240 x 1754.
+- Representative PDF: one A4 page.
+- Long-content PDF: three A4 pages.
+- Full test suite: 177 passed, 1 skipped.
+- Production build: passed with Next.js 16.2.10.
+- Browser console after the final interaction checkpoint: no current errors or warnings.
 
-- Filled material rows with done, pending, and active states.
-- Exported PNG and visually inspected status capsules and one-page layout.
-- Exported PDF, verified valid A4 metadata and exactly one page for representative long content.
-- Confirmed multiline next-stage plan has no automatic bullet prefix.
-- Confirmed imported English school names and surrounding basic-information fields export with uniform one-line row spacing.
-- Confirmed selected-range formatting leaves unselected text at its original style and survives export HTML generation.
-- Checked browser console after exports: no errors.
+## Comparison History
 
-**Comparison history**
+1. Initial implementation retained the previous dark header and repeated framed modules, which did not match the reference's white editorial hierarchy.
+2. The report was rebuilt around a continuous pale student rail and an open right-side content flow while preserving every editing and export control.
+3. Summary-card height, section spacing, material-table density, and timeline sizing were tightened after direct side-by-side comparison.
+4. The header divider was removed, the title position was aligned, pending nodes were reduced to small gray dots, and the current node was changed to the reference-style ring.
+5. No actionable P0, P1, or P2 visual differences remain. The P3 difference is that the app uses the existing Lucide outline icons instead of the reference's filled concept icons; this is intentional and keeps the production icon system consistent.
 
-1. Before: Canvas export used colored status text without capsule backgrounds; fixed minimum heights produced avoidable whitespace; A4 rounding created a nearly empty second page; next-stage lines received automatic bullets.
-2. Fixes: Canvas status pills, content-pressure compact mode, adaptive row heights, exact A4 pixel floor, pagination tolerance, and plain multiline plan rendering.
-3. Post-fix: 48 focused monthly-report tests pass, 172 project tests pass, production build passes, representative long PDF is one page, and combined visual comparison shows the requested density improvement.
+## Editable Summary And Emphasis Adjustment
+
+- Default export PNG: `/Users/jingru/Downloads/测试学生甲_美国本科新生_2027秋_反馈报告_20260716 (9).png`
+- Highlighted feedback PNG: `/Users/jingru/Downloads/测试学生甲_美国本科新生_2027秋_反馈报告_20260716 (10).png`
+- The default stage-feedback module now has a transparent background, no left accent border, and the same open editorial treatment as the following narrative modules.
+- Selecting `重点展示` applies one consistent emphasis pattern to any report module: theme soft background, theme accent border, and a 6 px left accent rule.
+- Stage focus now exposes editable module title, column titles, current-focus content, and next-suggestion content. Communication recognition fills the two content fields separately.
+- Key summary now exposes editable module title plus all three card titles and values. Empty overrides continue to derive automatically from basic information and material status.
+- Report-title and module-title inputs use a light blue field background and stronger focus treatment; content fields remain white.
+- Browser interaction verified auto-fill values `2/3`, `GPA 3.92 / 12年级 / TOEFL 105`, and `广州外国语学校`, manual overrides, preview synchronization, and both default/highlighted PNG exports.
+- Browser console after the adjustment workflow: no errors or warnings.
 
 final result: passed

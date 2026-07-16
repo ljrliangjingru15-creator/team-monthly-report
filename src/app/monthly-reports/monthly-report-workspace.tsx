@@ -2,21 +2,28 @@
 
 import {
   ArrowDown,
+  ArrowRight,
   ArrowUp,
   Bold as BoldIcon,
+  CalendarDays,
   Check,
+  ClipboardList,
   Download,
   FileText,
+  GraduationCap,
   GripVertical,
   Paperclip,
   Palette,
   Plus,
   RotateCcw,
+  School,
   Sparkles,
   Star,
   Trash2,
   Underline as UnderlineIcon,
   Upload,
+  UserRound,
+  UsersRound,
   Wand2,
 } from "lucide-react";
 import { useEffect, useMemo, useRef, useState } from "react";
@@ -33,6 +40,17 @@ type EditableReportContent = {
   season: string;
   reportDate: string;
   departmentLabel: string;
+  stageFocusTitle: string;
+  currentStageFocusTitle: string;
+  currentStageFocus: string;
+  nextStageFocusTitle: string;
+  summaryTitle: string;
+  summaryMaterialTitle: string;
+  summaryMaterialValue: string;
+  summaryAcademicTitle: string;
+  summaryAcademicValue: string;
+  summarySchoolTitle: string;
+  summarySchoolValue: string;
   completedThisMonthTitle: string;
   completedThisMonth: string;
   nextMonthPlanTitle: string;
@@ -130,6 +148,11 @@ type ReportModuleKey =
 
 type ExportFormat = "PDF" | "PNG";
 
+type ReportPageSlice = {
+  start: number;
+  end: number;
+};
+
 type KeyValueRow = {
   label: string;
   value: string;
@@ -146,6 +169,36 @@ type MaterialReportRow = {
 
 const initialApplicationType: MonthlyReportApplicationType = "美国本科新生";
 const companyLogoSrc = "/new-oriental-logo-2026.png";
+const reportPagePixelHeight = 1754;
+
+function buildReportPageSlices(
+  totalHeight: number,
+  maximumPageHeight: number,
+  breakPositions: number[],
+): ReportPageSlice[] {
+  const sortedBreakPositions = [...new Set(breakPositions)]
+    .filter((position) => position > 0 && position < totalHeight)
+    .sort((left, right) => left - right);
+  const slices: ReportPageSlice[] = [];
+  let start = 0;
+
+  while (totalHeight - start > maximumPageHeight + 1) {
+    const idealEnd = start + maximumPageHeight;
+    const minimumPreferredEnd = start + maximumPageHeight * 0.55;
+    const preferredBreak = sortedBreakPositions
+      .filter(
+        (position) =>
+          position >= minimumPreferredEnd && position <= idealEnd - 8,
+      )
+      .at(-1);
+    const end = preferredBreak ?? idealEnd;
+    slices.push({ start, end });
+    start = end;
+  }
+
+  slices.push({ start, end: totalHeight });
+  return slices;
+}
 
 const departmentLabelByApplicationType: Record<
   MonthlyReportApplicationType,
@@ -328,9 +381,20 @@ const reportModuleToggleLabels: Record<ReportModuleKey, string> = {
 
 const emptySectionPlaceholder = "待填写";
 const defaultEditableSectionTitles = {
+  stageFocus: "当前阶段重点和下一步建议",
+  summary: "关键摘要",
   completedThisMonth: "阶段性反馈",
   nextMonthPlan: "下一阶段计划",
   clientTasks: "需要学生/家庭配合",
+};
+const defaultStageFocusLabels = {
+  current: "当前阶段重点",
+  next: "下一步建议",
+};
+const defaultSummaryLabels = {
+  material: "材料完整度",
+  academic: "核心学术信息",
+  school: "当前就读学校",
 };
 const defaultStudentBasicInfo = [
   "就读年级：",
@@ -362,6 +426,17 @@ function buildDefaultContent(
     season: "2027秋",
     reportDate,
     departmentLabel: departmentLabelByApplicationType[applicationType],
+    stageFocusTitle: defaultEditableSectionTitles.stageFocus,
+    currentStageFocusTitle: defaultStageFocusLabels.current,
+    currentStageFocus: config.timeline[3] ?? config.timeline[0] ?? "",
+    nextStageFocusTitle: defaultStageFocusLabels.next,
+    summaryTitle: defaultEditableSectionTitles.summary,
+    summaryMaterialTitle: defaultSummaryLabels.material,
+    summaryMaterialValue: "",
+    summaryAcademicTitle: defaultSummaryLabels.academic,
+    summaryAcademicValue: "",
+    summarySchoolTitle: defaultSummaryLabels.school,
+    summarySchoolValue: "",
     completedThisMonthTitle: defaultEditableSectionTitles.completedThisMonth,
     completedThisMonth: config.defaultContent.completedThisMonth,
     nextMonthPlanTitle: defaultEditableSectionTitles.nextMonthPlan,
@@ -657,7 +732,7 @@ function ReportTextEditor({
         <label className="grid gap-1 text-sm font-medium" htmlFor={`${id}-title`}>
           {label}板块标题
           <input
-            className="rounded-lg border border-slate-300 px-3 py-2 text-sm"
+            className="rounded-lg border border-blue-200 bg-blue-50 px-3 py-2 text-sm shadow-inner outline-none transition focus:border-blue-400 focus:bg-white focus:ring-2 focus:ring-blue-100"
             id={`${id}-title`}
             value={sectionTitle}
             onChange={(event) => onSectionTitleChange(event.target.value)}
@@ -761,6 +836,18 @@ function extractFeedbackFromCommunication(rawText: string, fallback: EditableRep
   const completedLines = matchingLines([/完成|已推进|已确认|已提交|梳理|整理/]);
   const nextPlanLines = matchingLines([/下月|下周|下一步|计划|继续推进/]);
   const focusLines = matchingLines([/重点|关注|风险|提醒|节点|阶段/]);
+  const currentFocusLines = matchingLines([
+    /当前阶段(?:重点)?/,
+    /本阶段重点/,
+    /目前阶段/,
+    /当前重点/,
+  ]);
+  const nextFocusLines = matchingLines([
+    /下一阶段/,
+    /下一步/,
+    /后续(?:重点|建议)/,
+    /接下来/,
+  ]);
   const clientTaskLines = matchingLines([
     /(^请|需要|待学生|待家长|补充|上传|提供|证明)/,
   ]);
@@ -770,13 +857,17 @@ function extractFeedbackFromCommunication(rawText: string, fallback: EditableRep
   const nextMonthPlan =
     nextPlanLines.join("\n") ||
     fallback.nextMonthPlan;
+  const currentStageFocus =
+    currentFocusLines.join("\n") || fallback.currentStageFocus;
   const nextStageFocus =
-    focusLines.join("\n") ||
+    nextFocusLines.join("\n") ||
+    focusLines.filter((line) => !currentFocusLines.includes(line)).join("\n") ||
     fallback.nextStageFocus;
 
   return {
     completedThisMonth,
     nextMonthPlan,
+    currentStageFocus,
     nextStageFocus,
     clientTasks: clientTaskLines.join("\n") || fallback.clientTasks,
   };
@@ -1502,14 +1593,33 @@ function normalizeMaterialStatus(value: string): MaterialStatusKey {
   return "active";
 }
 
+function splitMaterialStatusAndRemark(value: string) {
+  const segments = value
+    .split(/[|｜:：]/)
+    .map((segment) => segment.trim())
+    .filter(Boolean);
+  const explicitStatusPattern =
+    /^(?:√|已提供|已收集|已完成|完成|已有|OK|提交|进行中|处理中|准备中|沟通中|等待提供|暂未提供|待补充|待提供|未提供|申请季提供|后续提供|之后提供|后补|后续|风险|异常|无法|缺失|逾期|需关注|问题|不适用|无需|NA|N\/A)$/i;
+
+  if (segments.length > 1 && explicitStatusPattern.test(segments[0])) {
+    return {
+      statusSource: segments[0],
+      remark: segments.slice(1).join("｜"),
+    };
+  }
+
+  return { statusSource: value, remark: value };
+}
+
 function parseMaterialRows(text: string): MaterialReportRow[] {
   return parseKeyValueRows(text).map((row) => {
-    const status = normalizeMaterialStatus(row.value);
+    const { statusSource, remark } = splitMaterialStatusAndRemark(row.value);
+    const status = normalizeMaterialStatus(statusSource);
     return {
       item: row.label,
       status,
       statusLabel: statusStyles[status].label,
-      remark: row.value,
+      remark,
     };
   });
 }
@@ -1613,6 +1723,9 @@ export function MonthlyReportWorkspace() {
     PNG: false,
   });
   const [exportStatus, setExportStatus] = useState("");
+  const exportReportRef = useRef<HTMLElement | null>(null);
+  const [shouldRenderExportTarget, setShouldRenderExportTarget] = useState(false);
+  const [reportPageCount, setReportPageCount] = useState(1);
   const [pendingApplicationType, setPendingApplicationType] =
     useState<MonthlyReportApplicationType | null>(null);
   const [, setIsDirty] = useState(false);
@@ -1635,7 +1748,35 @@ export function MonthlyReportWorkspace() {
         ? current
         : { ...current, reportDate: getTodayReportDateInputValue() },
     );
+    setShouldRenderExportTarget(
+      !navigator.userAgent.toLowerCase().includes("jsdom"),
+    );
   }, []);
+
+  useEffect(() => {
+    const reportNode = exportReportRef.current;
+    if (
+      !shouldRenderExportTarget ||
+      !reportNode ||
+      typeof ResizeObserver === "undefined"
+    ) {
+      return;
+    }
+
+    const updatePageCount = () => {
+      setReportPageCount(
+        buildReportPageSlices(
+          reportNode.scrollHeight,
+          reportPagePixelHeight,
+          getReportPdfBreakPositions(),
+        ).length,
+      );
+    };
+    updatePageCount();
+    const observer = new ResizeObserver(updatePageCount);
+    observer.observe(reportNode);
+    return () => observer.disconnect();
+  }, [shouldRenderExportTarget]);
 
   useEffect(() => {
     const nextFormattedText = {
@@ -1766,6 +1907,11 @@ export function MonthlyReportWorkspace() {
     resetContent: boolean,
   ) {
     const nextConfig = getMonthlyReportApplicationConfig(nextApplicationType);
+    const currentConfig = getMonthlyReportApplicationConfig(applicationType);
+    const currentDefaultFocus =
+      currentConfig.timeline[3] ?? currentConfig.timeline[0] ?? "";
+    const nextDefaultFocus =
+      nextConfig.timeline[3] ?? nextConfig.timeline[0] ?? "";
     setApplicationType(nextApplicationType);
     setTheme(nextConfig.theme);
     setTimelineItems(buildDefaultTimeline(nextApplicationType));
@@ -1787,6 +1933,11 @@ export function MonthlyReportWorkspace() {
       setContent((current) => ({
         ...current,
         departmentLabel: departmentLabelByApplicationType[nextApplicationType],
+        currentStageFocus:
+          !current.currentStageFocus.trim() ||
+          current.currentStageFocus === currentDefaultFocus
+            ? nextDefaultFocus
+            : current.currentStageFocus,
       }));
     }
   }
@@ -1861,6 +2012,17 @@ export function MonthlyReportWorkspace() {
     field: "label" | "status" | "note",
     value: string,
   ) {
+    const previousItem = timelineItems.find((item) => item.id === id);
+    if (field === "label" && previousItem?.status === "current") {
+      setContent((current) => ({
+        ...current,
+        currentStageFocus:
+          !current.currentStageFocus.trim() ||
+          current.currentStageFocus === previousItem.label
+            ? value
+            : current.currentStageFocus,
+      }));
+    }
     setTimelineItems((current) =>
       current.map((item, index) => {
         if (item.id !== id) return item;
@@ -1874,6 +2036,16 @@ export function MonthlyReportWorkspace() {
   }
 
   function setCurrentTimelineStage(currentIndex: number) {
+    const previousFocus = getCurrentTimelineItem(timelineItems)?.label ?? "";
+    const nextFocus = timelineItems[currentIndex]?.label ?? "";
+    setContent((current) => ({
+      ...current,
+      currentStageFocus:
+        !current.currentStageFocus.trim() ||
+        current.currentStageFocus === previousFocus
+          ? nextFocus
+          : current.currentStageFocus,
+    }));
     setTimelineItems((current) =>
       current.map((item, index) => ({
         ...item,
@@ -2127,7 +2299,11 @@ export function MonthlyReportWorkspace() {
       nextMonthPlan:
         extractReportSection(rawText, "下一阶段计划") ||
         extractReportSection(rawText, "下月计划"),
+      currentStageFocus:
+        extractReportSection(rawText, "当前阶段重点") ||
+        extractReportSection(rawText, "本阶段重点"),
       nextStageFocus:
+        extractReportSection(rawText, "下一步建议") ||
         extractReportSection(rawText, "下一阶段重点") ||
         extractReportSection(rawText, "当前阶段重点和下一步建议"),
       clientTasks:
@@ -2154,6 +2330,8 @@ export function MonthlyReportWorkspace() {
       completedThisMonth:
         previousContent.completedThisMonth || current.completedThisMonth,
       nextMonthPlan: previousContent.nextMonthPlan || current.nextMonthPlan,
+      currentStageFocus:
+        previousContent.currentStageFocus || current.currentStageFocus,
       nextStageFocus: previousContent.nextStageFocus || current.nextStageFocus,
       clientTasks: previousContent.clientTasks || current.clientTasks,
       recognizedApplicationStatus:
@@ -2258,6 +2436,30 @@ export function MonthlyReportWorkspace() {
   );
   const metricSummary = buildMetricSummary(studentInfoRows, materialRows);
   const currentTimelineItem = getCurrentTimelineItem(timelineItems);
+  const stageFocusTitle =
+    content.stageFocusTitle.trim() || defaultEditableSectionTitles.stageFocus;
+  const currentStageFocusTitle =
+    content.currentStageFocusTitle.trim() || defaultStageFocusLabels.current;
+  const currentStageFocusDisplay =
+    content.currentStageFocus.trim() ||
+    currentTimelineItem?.label ||
+    emptySectionPlaceholder;
+  const nextStageFocusTitle =
+    content.nextStageFocusTitle.trim() || defaultStageFocusLabels.next;
+  const summaryTitle =
+    content.summaryTitle.trim() || defaultEditableSectionTitles.summary;
+  const summaryMaterialTitle =
+    content.summaryMaterialTitle.trim() || defaultSummaryLabels.material;
+  const summaryMaterialValue =
+    content.summaryMaterialValue.trim() || metricSummary.materialText;
+  const summaryAcademicTitle =
+    content.summaryAcademicTitle.trim() || defaultSummaryLabels.academic;
+  const summaryAcademicValue =
+    content.summaryAcademicValue.trim() || metricSummary.academicText;
+  const summarySchoolTitle =
+    content.summarySchoolTitle.trim() || defaultSummaryLabels.school;
+  const summarySchoolValue =
+    content.summarySchoolValue.trim() || metricSummary.school;
   const completedThisMonthDisplay = content.completedThisMonth.trim()
     ? content.completedThisMonth
     : emptySectionPlaceholder;
@@ -2267,8 +2469,14 @@ export function MonthlyReportWorkspace() {
   const clientTasksDisplay = content.clientTasks.trim()
     ? content.clientTasks
     : emptySectionPlaceholder;
+  const completedThisMonthLineRanges = locateNonEmptyLineSourceRanges(
+    content.completedThisMonth,
+  );
   const nextMonthPlanLineRanges = locateNonEmptyLineSourceRanges(
     content.nextMonthPlan,
+  );
+  const clientTasksLineRanges = locateNonEmptyLineSourceRanges(
+    content.clientTasks,
   );
   const reportTitle =
     content.title.trim() || `${content.studentName}申请季阶段性反馈报告`;
@@ -2280,7 +2488,11 @@ export function MonthlyReportWorkspace() {
           100,
       )
     : 0;
-
+  const completedTimelineCount = Math.min(
+    timelineItems.length,
+    timelineItems.filter((item) => item.status === "completed").length +
+      (timelineItems.some((item) => item.status === "current") ? 1 : 0),
+  );
   function toggleExportFormat(format: ExportFormat) {
     setExportFormats((current) => {
       const next = { ...current, [format]: !current[format] };
@@ -2366,10 +2578,10 @@ export function MonthlyReportWorkspace() {
     const renderReportModule = (key: ReportModuleKey) => {
       if (!modules[key]) return "";
       if (key === "stageFocus") {
-        return `<section class="${sectionClass(key)}"><h2 class="section-title">当前阶段重点和下一步建议</h2><div class="focus-grid"><div><h3>当前阶段重点</h3><p>${escapeHtml(currentTimelineItem?.label ?? emptySectionPlaceholder)}</p></div><div><h3>下一步建议</h3><p>${escapeHtml(content.nextStageFocus)}</p></div></div></section>`;
+        return `<section class="${sectionClass(key)}"><h2 class="section-title">${escapeHtml(stageFocusTitle)}</h2><div class="focus-grid"><div><h3>${escapeHtml(currentStageFocusTitle)}</h3><p>${escapeHtml(currentStageFocusDisplay)}</p></div><div><h3>${escapeHtml(nextStageFocusTitle)}</h3><p>${escapeHtml(content.nextStageFocus)}</p></div></div></section>`;
       }
       if (key === "summary") {
-        return `<section class="${sectionClass(key)}" aria-label="关键摘要"><h2 class="section-title">关键摘要</h2><div class="metrics"><div class="metric">材料收集完整度<strong>${escapeHtml(metricSummary.materialText)}</strong><div class="progress"><span style="width:${metricSummary.materialPercent}%"></span></div></div><div class="metric">核心学术信息<strong>${escapeHtml(metricSummary.academicText)}</strong></div><div class="metric">当前就读学校<strong>${escapeHtml(metricSummary.school)}</strong></div></div></section>`;
+        return `<section class="${sectionClass(key)}" aria-label="${escapeHtml(summaryTitle)}"><h2 class="section-title">${escapeHtml(summaryTitle)}</h2><div class="metrics"><div class="metric">${escapeHtml(summaryMaterialTitle)}<strong>${escapeHtml(summaryMaterialValue)}</strong><div class="progress"><span style="width:${metricSummary.materialPercent}%"></span></div></div><div class="metric">${escapeHtml(summaryAcademicTitle)}<strong>${escapeHtml(summaryAcademicValue)}</strong></div><div class="metric">${escapeHtml(summarySchoolTitle)}<strong>${escapeHtml(summarySchoolValue)}</strong></div></div></section>`;
       }
       if (key === "timeline") {
         return `<section class="${sectionClass(key)}"><h2 class="section-title">${escapeHtml(config.moduleTitles.timeline)}</h2><ol class="timeline">${timelineHtml}</ol></section>`;
@@ -2438,7 +2650,7 @@ body{font-family:Arial,"PingFang SC","Microsoft YaHei",sans-serif;margin:0;color
 h1{margin:8px 0 10px;font-size:28px;line-height:1.2}
 .meta{display:flex;flex-wrap:wrap;gap:8px;font-size:12px;opacity:.9}
 .section-card{margin-top:12px;border:1px solid #e2e8f0;border-radius:16px;background:white;padding:14px;box-shadow:0 2px 8px rgba(15,23,42,.04)}
-.section-card.highlighted{background:${theme.secondarySoftColor};border-color:${theme.accentColor};box-shadow:0 12px 28px rgba(15,23,42,.10)}
+.section-card.highlighted{background:${theme.secondarySoftColor};border-color:${theme.accentColor};border-left:5px solid ${theme.accentColor};box-shadow:0 12px 28px rgba(15,23,42,.10)}
 .paired-sections{display:grid;grid-template-columns:minmax(0,1fr) minmax(0,1fr);align-items:stretch;gap:12px;margin-top:12px}
 .paired-sections .section-card{height:100%;margin-top:0;box-sizing:border-box}
 .focus-grid{display:grid;grid-template-columns:1fr 1fr;gap:12px}
@@ -3052,18 +3264,18 @@ ${renderedReportModules}
           context.fillStyle = theme.titleColor;
           context.font = `bold ${useCompactExport ? 20 : 24}px Arial, "PingFang SC", "Microsoft YaHei", sans-serif`;
           context.fillText(
-            "当前阶段重点和下一步建议",
+            stageFocusTitle,
             contentX + 18,
             cardY + (useCompactExport ? 30 : 36),
           );
           context.font = `bold ${useCompactExport ? 15 : 18}px Arial, "PingFang SC", "Microsoft YaHei", sans-serif`;
           context.fillText(
-            "当前阶段重点",
+            currentStageFocusTitle,
             contentX + 18,
             cardY + (useCompactExport ? 60 : 78),
           );
           context.fillText(
-            "下一步建议",
+            nextStageFocusTitle,
             contentX + contentWidth / 2 + 12,
             cardY + (useCompactExport ? 60 : 78),
           );
@@ -3071,7 +3283,7 @@ ${renderedReportModules}
           context.font = `${useCompactExport ? 14 : 17}px Arial, "PingFang SC", "Microsoft YaHei", sans-serif`;
           drawWrappedText(
             context,
-            currentTimelineItem?.label ?? emptySectionPlaceholder,
+            currentStageFocusDisplay,
             contentX + 18,
             cardY + (useCompactExport ? 82 : 106),
             contentWidth / 2 - 36,
@@ -3093,15 +3305,15 @@ ${renderedReportModules}
           context.fillStyle = theme.titleColor;
           context.font = `bold ${useCompactExport ? 20 : 24}px Arial, "PingFang SC", "Microsoft YaHei", sans-serif`;
           context.fillText(
-            "关键摘要",
+            summaryTitle,
             contentX + 18,
             cardY + (useCompactExport ? 30 : 36),
           );
           const metricWidth = (contentWidth - 60) / 3;
           [
-            ["材料收集完整度", metricSummary.materialText],
-            ["核心学术信息", metricSummary.academicText],
-            ["当前就读学校", metricSummary.school],
+            [summaryMaterialTitle, summaryMaterialValue],
+            [summaryAcademicTitle, summaryAcademicValue],
+            [summarySchoolTitle, summarySchoolValue],
           ].forEach(([label, value], index) => {
             const x = contentX + 18 + index * (metricWidth + 12);
             const metricY = cardY + (useCompactExport ? 42 : 58);
@@ -3332,17 +3544,29 @@ ${renderedReportModules}
     });
   }
 
+  function getReportPdfBreakPositions() {
+    const reportNode = exportReportRef.current;
+    if (!reportNode) return [];
+    const reportTop = reportNode.getBoundingClientRect().top;
+    return Array.from(
+      reportNode.querySelectorAll<HTMLElement>("[data-pdf-break-before='true']"),
+    ).map((element) =>
+      Math.max(0, Math.round(element.getBoundingClientRect().top - reportTop)),
+    );
+  }
+
   async function buildExportBlob(format: ExportFormat) {
     if (format === "PNG") {
-      return renderReportPngBlob();
+      return renderReportDomPngBlob();
     }
 
-    const pngBlob = await renderReportPngBlob();
+    const pngBlob = await renderReportDomPngBlob();
     if (pngBlob.type !== "image/png") {
       return new Blob([buildReportHtml()], { type: "application/pdf" });
     }
 
-    const { PDFDocument } = await import("pdf-lib");
+    const pdfBreakPositions = getReportPdfBreakPositions();
+    const { PDFDocument, rgb } = await import("pdf-lib");
     const pdf = await PDFDocument.create();
     const pngBytes = new Uint8Array(await pngBlob.arrayBuffer());
     const image = await pdf.embedPng(pngBytes);
@@ -3351,21 +3575,90 @@ ${renderedReportModules}
     const scale = pageWidth / image.width;
     const width = image.width * scale;
     const height = image.height * scale;
-    const pageCount = Math.max(1, Math.ceil((height - 0.5) / pageHeight));
+    const sourcePageHeight = pageHeight / scale;
+    const pageSlices = buildReportPageSlices(
+      image.height,
+      sourcePageHeight,
+      pdfBreakPositions,
+    );
+    const backgroundHex = theme.cardColor.replace("#", "");
+    const normalizedBackgroundHex =
+      backgroundHex.length === 3
+        ? backgroundHex
+            .split("")
+            .map((character) => `${character}${character}`)
+            .join("")
+        : backgroundHex.padEnd(6, "f").slice(0, 6);
+    const backgroundColor = rgb(
+      Number.parseInt(normalizedBackgroundHex.slice(0, 2), 16) / 255,
+      Number.parseInt(normalizedBackgroundHex.slice(2, 4), 16) / 255,
+      Number.parseInt(normalizedBackgroundHex.slice(4, 6), 16) / 255,
+    );
 
-    for (let pageIndex = 0; pageIndex < pageCount; pageIndex += 1) {
+    for (const slice of pageSlices) {
       const page = pdf.addPage([pageWidth, pageHeight]);
       page.drawImage(image, {
         x: 0,
-        y: pageHeight - height + pageIndex * pageHeight,
+        y: pageHeight - height + slice.start * scale,
         width,
         height,
       });
+      const blankHeight = Math.max(
+        0,
+        pageHeight - (slice.end - slice.start) * scale,
+      );
+      if (blankHeight > 0.5) {
+        page.drawRectangle({
+          x: 0,
+          y: 0,
+          width: pageWidth,
+          height: blankHeight,
+          color: backgroundColor,
+        });
+      }
     }
     const pdfBytes = await pdf.save();
     const pdfBuffer = new ArrayBuffer(pdfBytes.byteLength);
     new Uint8Array(pdfBuffer).set(pdfBytes);
     return new Blob([pdfBuffer], { type: "application/pdf" });
+  }
+
+  async function renderReportDomPngBlob() {
+    if (
+      typeof navigator !== "undefined" &&
+      navigator.userAgent.toLowerCase().includes("jsdom")
+    ) {
+      return new Blob([buildReportHtml()], { type: "text/html;charset=utf-8" });
+    }
+
+    const reportNode = exportReportRef.current;
+    if (!reportNode) {
+      throw new Error("报告导出视图尚未准备完成，请稍后重试。");
+    }
+
+    if (document.fonts?.ready) {
+      await document.fonts.ready;
+    }
+
+    const { toBlob } = await import("html-to-image");
+    const width = Math.ceil(reportNode.scrollWidth);
+    const height = Math.ceil(reportNode.scrollHeight);
+    const blob = await toBlob(reportNode, {
+      backgroundColor: theme.cardColor,
+      cacheBust: true,
+      canvasHeight: height,
+      canvasWidth: width,
+      height,
+      pixelRatio: 1,
+      skipAutoScale: true,
+      width,
+    });
+
+    if (!blob) {
+      throw new Error("报告图片生成失败，请重新尝试。");
+    }
+
+    return blob;
   }
 
   function downloadBlob(fileName: string, blob: Blob) {
@@ -3398,52 +3691,148 @@ ${renderedReportModules}
     }
   }
 
-  function getPreviewSectionStyle(key: ReportModuleKey) {
-    return highlightedModules[key]
-      ? {
-          backgroundColor: theme.secondarySoftColor,
-          borderColor: theme.accentColor,
-        }
-      : { backgroundColor: "#ffffff" };
+  function getFusionSectionStyle(
+    key: ReportModuleKey,
+    placement: "rail" | "main" | "full",
+  ) {
+    const highlighted = highlightedModules[key];
+
+    if (highlighted) {
+      return {
+        backgroundColor: theme.secondarySoftColor,
+        borderColor: theme.accentColor,
+        borderLeftColor: theme.accentColor,
+      };
+    }
+    if (placement === "rail") {
+      return { backgroundColor: "transparent", borderColor: "#cbd5e1" };
+    }
+    return {
+      backgroundColor: "transparent",
+      borderColor: "transparent",
+    };
   }
 
-  function renderPreviewModule(key: ReportModuleKey, paired = false) {
+  function renderFusionSectionHeading(
+    key: ReportModuleKey,
+    title: string,
+    placement: "rail" | "main" | "full",
+  ) {
+    const isRail = placement === "rail";
+    const iconClass = "h-8 w-8 shrink-0";
+    const icon =
+      key === "stageFocus" ? (
+        <ClipboardList className={iconClass} aria-hidden />
+      ) : key === "completedThisMonth" ? (
+        <Star className={iconClass} aria-hidden />
+      ) : key === "nextMonthPlan" ? (
+        <CalendarDays className={iconClass} aria-hidden />
+      ) : key === "clientTasks" ? (
+        <UsersRound className={iconClass} aria-hidden />
+      ) : key === "attachments" ? (
+        <Paperclip className={iconClass} aria-hidden />
+      ) : null;
+    const headingColor = isRail
+      ? theme.timelineCompletedColor
+      : highlightedModules[key]
+        ? theme.accentColor
+        : key === "stageFocus"
+          ? theme.timelineCompletedColor
+          : key === "nextMonthPlan"
+            ? theme.primaryColor
+            : key === "clientTasks"
+              ? theme.accentColor
+              : theme.titleColor;
+
+    return (
+      <div className="flex min-w-0 items-center gap-3">
+        {icon ? <span style={{ color: headingColor }}>{icon}</span> : null}
+        <h3
+          className={isRail ? "min-w-0 text-[24px] font-bold leading-tight" : "min-w-0 text-[28px] font-bold leading-tight"}
+          style={{ color: headingColor }}
+        >
+          {title}
+        </h3>
+      </div>
+    );
+  }
+
+  function renderFusionModule(
+    key: ReportModuleKey,
+    placement: "rail" | "main" | "full",
+    includeTestIds: boolean,
+    paired: boolean,
+  ) {
     if (!modules[key]) return null;
     if (key === "attachments" && !attachmentNames) return null;
 
-    const sectionShellClass = paired
-      ? "h-full min-w-0 rounded-2xl border border-slate-200 p-3 text-xs leading-5 shadow-[0_2px_8px_rgba(15,23,42,0.04)]"
-      : "mx-4 my-3 rounded-2xl border border-slate-200 p-3 text-xs leading-5 shadow-[0_2px_8px_rgba(15,23,42,0.04)]";
-    const sectionHeaderClass = "text-sm font-semibold";
-    const sectionProps = {
+    const sectionClass =
+      placement === "rail"
+        ? highlightedModules[key]
+          ? key === "timeline" && timelineItems.length > 15
+            ? "rounded-lg border border-l-[6px] p-4 text-[16px] leading-[1.35]"
+            : "rounded-lg border border-l-[6px] p-4 text-[17px] leading-[1.4]"
+          : key === "timeline" && timelineItems.length > 15
+            ? "border-t border-dashed px-0 py-4 text-[16px] leading-[1.35]"
+            : "border-t border-dashed px-0 py-5 text-[17px] leading-[1.4]"
+        : highlightedModules[key]
+          ? "rounded-lg border border-l-[6px] p-5 text-[19px] leading-[1.55]"
+          : key === "completedThisMonth"
+            ? "border-b border-slate-200 py-7 text-[19px] leading-[1.55]"
+            : key === "stageFocus"
+              ? "pb-12 text-[19px] leading-[1.55]"
+              : key === "summary"
+                ? "border-b border-slate-200 pb-11 pt-1 text-[19px] leading-[1.5]"
+                : key === "materialCollection"
+                  ? "border-b border-slate-200 py-8 text-[18px] leading-[1.45]"
+                  : key === "nextMonthPlan"
+                    ? "border-b border-dashed border-slate-300 py-7 text-[19px] leading-[1.55]"
+                    : "py-7 text-[19px] leading-[1.55]";
+    const testId = includeTestIds ? `report-section-${key}` : undefined;
+    const reportSectionTestId =
+      includeTestIds && placement !== "rail" ? "report-section" : undefined;
+    const commonProps = {
       "data-highlighted": highlightedModules[key] ? "true" : "false",
       "data-layout": paired ? "half" : "full",
-      "data-testid": `report-section-${key}`,
-      className: sectionShellClass,
-      style: getPreviewSectionStyle(key),
+      "data-pdf-break-before": placement === "rail" ? undefined : "true",
+      "data-testid": testId,
+      className: sectionClass,
+      style: getFusionSectionStyle(key, placement),
     };
 
     if (key === "stageFocus") {
       return (
-        <section key={key} {...sectionProps}>
-          <div data-testid="report-section">
-            <h3 className={sectionHeaderClass} style={{ color: theme.titleColor }}>
-              当前阶段重点和下一步建议
-            </h3>
-            <div className="mt-3 grid gap-3 md:grid-cols-2">
-              <div className="rounded-lg border border-slate-200 bg-white/70 p-3">
-                <p className="font-semibold" style={{ color: theme.titleColor }}>
-                  当前阶段重点
+        <section key={key} {...commonProps}>
+          <div data-testid={reportSectionTestId}>
+            {renderFusionSectionHeading(key, stageFocusTitle, placement)}
+            <div
+              className="mt-6 grid min-h-[144px] grid-cols-[1fr_58px_1.35fr] overflow-hidden rounded-lg border border-l-[6px]"
+              style={{
+                background: `linear-gradient(90deg, ${theme.primarySoftColor} 0%, #ffffff 52%, ${theme.secondarySoftColor} 100%)`,
+                borderColor: "#e5e7eb",
+                borderLeftColor: theme.timelineCompletedColor,
+              }}
+            >
+              <div className="p-6">
+                <p className="font-bold" style={{ color: theme.timelineCompletedColor }}>
+                  {currentStageFocusTitle}
                 </p>
-                <p className="mt-1">
-                  {currentTimelineItem?.label ?? emptySectionPlaceholder}
+                <p className="mt-3 text-[22px] font-semibold" style={{ color: theme.titleColor }}>
+                  {currentStageFocusDisplay}
                 </p>
               </div>
-              <div className="rounded-lg border border-slate-200 bg-white/70 p-3">
-                <p className="font-semibold" style={{ color: theme.titleColor }}>
-                  下一步建议
+              <div className="flex items-center justify-center">
+                <ArrowRight
+                  className="h-7 w-7"
+                  style={{ color: theme.timelineCompletedColor }}
+                  aria-hidden
+                />
+              </div>
+              <div className="p-6">
+                <p className="font-bold" style={{ color: theme.accentColor }}>
+                  {nextStageFocusTitle}
                 </p>
-                <p className="mt-1 whitespace-pre-line">{content.nextStageFocus}</p>
+                <p className="mt-3 whitespace-pre-line">{content.nextStageFocus}</p>
               </div>
             </div>
           </div>
@@ -3453,40 +3842,50 @@ ${renderedReportModules}
 
     if (key === "summary") {
       return (
-        <section key={key} {...sectionProps} aria-label="关键摘要">
-          <div data-testid="report-section">
-            <h3 className={sectionHeaderClass} style={{ color: theme.titleColor }}>
-              关键摘要
-            </h3>
-            <div className="mt-3 grid gap-2 sm:grid-cols-3">
-              <div
-                className="rounded-lg border border-slate-200 p-3"
-                style={{ backgroundColor: theme.primarySoftColor }}
-              >
-                <span style={{ color: theme.mutedTextColor }}>材料完整度</span>
-                <strong className="mt-1 block text-base" style={{ color: theme.titleColor }}>
-                  {metricSummary.materialText}
-                </strong>
-                <span className="mt-2 block h-1.5 overflow-hidden rounded-full bg-slate-200">
+        <section key={key} {...commonProps} aria-label={summaryTitle}>
+          <div data-testid={reportSectionTestId}>
+            {renderFusionSectionHeading(key, summaryTitle, placement)}
+            <div className="mt-6 grid grid-cols-3 gap-5">
+              <div className="min-h-[154px] rounded-lg border border-slate-200 bg-white p-4">
+                <div className="flex items-center gap-3">
                   <span
-                    className="block h-full rounded-full"
-                    style={{
-                      width: `${metricSummary.materialPercent}%`,
-                      backgroundColor: theme.primaryColor,
-                    }}
-                  />
-                </span>
-              </div>
-              <div className="rounded-lg border border-slate-200 bg-white p-3">
-                <span style={{ color: theme.mutedTextColor }}>核心学术信息</span>
-                <strong className="mt-1 block text-sm" style={{ color: theme.titleColor }}>
-                  {metricSummary.academicText}
+                    className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full"
+                    style={{ backgroundColor: `${theme.timelineCompletedColor}18`, color: theme.timelineCompletedColor }}
+                  >
+                    <FileText className="h-5 w-5" aria-hidden />
+                  </span>
+                  <span className="text-[16px]" style={{ color: theme.mutedTextColor }}>{summaryMaterialTitle}</span>
+                </div>
+                <strong className="mt-4 block text-[24px]" style={{ color: theme.titleColor }}>
+                  {summaryMaterialValue}
                 </strong>
               </div>
-              <div className="rounded-lg border border-slate-200 bg-white p-3">
-                <span style={{ color: theme.mutedTextColor }}>当前就读学校</span>
-                <strong className="mt-1 block text-sm" style={{ color: theme.titleColor }}>
-                  {metricSummary.school}
+              <div className="min-h-[154px] rounded-lg border border-slate-200 bg-white p-4">
+                <div className="flex items-center gap-3">
+                  <span
+                    className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full"
+                    style={{ backgroundColor: `${theme.primaryColor}14`, color: theme.primaryColor }}
+                  >
+                    <GraduationCap className="h-5 w-5" aria-hidden />
+                  </span>
+                  <span className="text-[16px]" style={{ color: theme.mutedTextColor }}>{summaryAcademicTitle}</span>
+                </div>
+                <strong className="mt-4 block text-[20px] leading-[1.28]" style={{ color: theme.titleColor }}>
+                  {summaryAcademicValue}
+                </strong>
+              </div>
+              <div className="min-h-[154px] rounded-lg border border-slate-200 bg-white p-4">
+                <div className="flex items-center gap-3">
+                  <span
+                    className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full"
+                    style={{ backgroundColor: `${theme.accentColor}14`, color: theme.accentColor }}
+                  >
+                    <School className="h-5 w-5" aria-hidden />
+                  </span>
+                  <span className="text-[16px]" style={{ color: theme.mutedTextColor }}>{summarySchoolTitle}</span>
+                </div>
+                <strong className="mt-4 block text-[21px] leading-[1.3]" style={{ color: theme.titleColor }}>
+                  {summarySchoolValue}
                 </strong>
               </div>
             </div>
@@ -3496,41 +3895,99 @@ ${renderedReportModules}
     }
 
     if (key === "timeline") {
+      const useDenseTimeline = timelineItems.length > 15;
       return (
-        <section key={key} {...sectionProps}>
-          <div data-testid="report-section">
-            <h3 className={sectionHeaderClass} style={{ color: theme.titleColor }}>
-              {config.moduleTitles.timeline}
-            </h3>
-            <ol className="mt-3 grid grid-cols-2 gap-2">
-              {timelineItems.map((item, index) => (
-                <li
-                  className="rounded-lg border border-slate-200 bg-slate-50 p-2"
-                  data-testid={`timeline-node-${index}`}
-                  key={item.id}
-                >
-                  {item.note.trim() ? (
+        <section key={key} {...commonProps}>
+          <div data-testid={reportSectionTestId}>
+            {renderFusionSectionHeading(key, config.moduleTitles.timeline, placement)}
+            <ol className={useDenseTimeline ? "mt-4" : "mt-5"}>
+              {timelineItems.map((item, index) => {
+                const statusLabel =
+                  item.status === "current"
+                    ? "进行中"
+                    : timelineStatusOptions.find(
+                        (option) => option.value === item.status,
+                      )?.label;
+                return (
+                  <li
+                    className={
+                      useDenseTimeline
+                        ? "relative grid min-h-8 grid-cols-[30px_minmax(0,1fr)_auto] items-start gap-2 pb-0.5"
+                        : "relative grid min-h-10 grid-cols-[34px_minmax(0,1fr)_auto] items-start gap-2 pb-1.5"
+                    }
+                    data-testid={includeTestIds ? `timeline-node-${index}` : undefined}
+                    data-pdf-break-before="true"
+                    key={item.id}
+                  >
+                    {index < timelineItems.length - 1 ? (
+                      <span
+                        aria-hidden
+                        className={
+                          useDenseTimeline
+                            ? "absolute left-3.5 top-6 h-[calc(100%-6px)] border-l-2"
+                            : "absolute left-4 top-7 h-[calc(100%-8px)] border-l-2"
+                        }
+                        style={{ borderColor: theme.timelinePendingColor }}
+                      />
+                    ) : null}
                     <span
-                      className="mb-2 inline-flex rounded-full px-2 py-1 text-[10px] font-semibold"
+                      className={`relative z-10 flex items-center justify-center rounded-full bg-white ${
+                        item.status === "pending"
+                          ? useDenseTimeline
+                            ? "ml-[8px] mt-2 h-3 w-3"
+                            : "ml-[10px] mt-2 h-3 w-3"
+                          : useDenseTimeline
+                            ? "ml-0.5 h-6 w-6"
+                            : "ml-0.5 h-7 w-7"
+                      }`}
+                      data-testid={includeTestIds ? `timeline-dot-${index}` : undefined}
                       style={{
-                        backgroundColor: theme.secondarySoftColor,
-                        color: theme.accentColor,
+                        backgroundColor: getTimelineColor(item.status),
+                        color: "#ffffff",
                       }}
                     >
-                      {item.note}
+                      {item.status === "completed" ? (
+                        <Check className={useDenseTimeline ? "h-5 w-5" : "h-6 w-6"} aria-hidden />
+                      ) : item.status === "current" ? (
+                        <span
+                          className={useDenseTimeline ? "h-3.5 w-3.5 rounded-full bg-white" : "h-4 w-4 rounded-full bg-white"}
+                          aria-hidden
+                        />
+                      ) : null}
                     </span>
-                  ) : null}
-                  <span
-                    data-testid={`timeline-dot-${index}`}
-                    className="mb-1 block h-2.5 w-2.5 rounded-full"
-                    style={{ backgroundColor: getTimelineColor(item.status) }}
-                  />
-                  <span className="block font-medium">{item.label}</span>
-                  <span className="mt-1 block text-slate-500">
-                    {timelineStatusOptions.find((option) => option.value === item.status)?.label}
-                  </span>
-                </li>
-              ))}
+                    <span className={useDenseTimeline ? "min-w-0 pt-0.5" : "min-w-0 pt-1"}>
+                      <span
+                        className="block font-semibold"
+                        style={{
+                          color:
+                            item.status === "current"
+                              ? theme.primaryColor
+                              : theme.textColor,
+                        }}
+                      >
+                        {item.label}
+                      </span>
+                      {item.note.trim() ? (
+                        <span
+                          className="mt-1 inline-flex rounded-full px-2.5 py-1 text-[15px] font-semibold"
+                          style={{
+                            backgroundColor: theme.secondarySoftColor,
+                            color: theme.accentColor,
+                          }}
+                        >
+                          {item.note}
+                        </span>
+                      ) : null}
+                    </span>
+                    <span
+                      className={useDenseTimeline ? "pt-0.5 text-[15px]" : "pt-1 text-[16px]"}
+                      style={{ color: theme.mutedTextColor }}
+                    >
+                      {statusLabel}
+                    </span>
+                  </li>
+                );
+              })}
             </ol>
           </div>
         </section>
@@ -3538,44 +3995,50 @@ ${renderedReportModules}
     }
 
     if (key === "basicInfo") {
+      const rows =
+        studentInfoRows.length > 0
+          ? studentInfoRows
+          : [{ label: "基础信息", value: emptySectionPlaceholder }];
       return (
-        <section key={key} {...sectionProps}>
-          <div data-testid="report-section">
-            <h3 className={sectionHeaderClass} style={{ color: theme.titleColor }}>
-              基础信息
-            </h3>
-            <div className="mt-2 divide-y divide-slate-100">
-              {(studentInfoRows.length > 0
-                ? studentInfoRows
-                : [{ label: "基础信息", value: emptySectionPlaceholder }]
-              ).map((row, index) => {
+        <section key={key} {...commonProps}>
+          <div data-testid={reportSectionTestId}>
+            {renderFusionSectionHeading(key, "基础信息", placement)}
+            <div
+              className={
+                placement === "full"
+                  ? "mt-4 grid grid-cols-2 gap-x-8"
+                  : "mt-4 divide-y divide-slate-200"
+              }
+            >
+              {rows.map((row, index) => {
                 const sourceRange = studentInfoSourceRanges[index];
                 return (
-                <div className="grid grid-cols-[112px_1fr] gap-2 py-2" key={row.label}>
-                  <span style={{ color: theme.mutedTextColor }}>
-                    {sourceRange?.labelStart >= 0
-                      ? renderStyledText(
-                          "studentBasicInfo",
-                          content.studentBasicInfo,
-                          sourceRange.labelStart,
-                          sourceRange.labelEnd,
-                        )
-                      : row.label}
-                  </span>
-                  <span
-                    className="break-words"
-                    style={getTextFormattingStyle("studentBasicInfo")}
+                  <div
+                    className="grid grid-cols-[118px_minmax(0,1fr)] gap-3 border-b border-slate-100 py-2"
+                    data-pdf-break-before="true"
+                    key={`${row.label}-${index}`}
                   >
-                    {sourceRange?.valueStart >= 0
-                      ? renderStyledText(
-                          "studentBasicInfo",
-                          content.studentBasicInfo,
-                          sourceRange.valueStart,
-                          sourceRange.valueEnd,
-                        )
-                      : row.value}
-                  </span>
-                </div>
+                    <span style={{ color: theme.mutedTextColor }}>
+                      {sourceRange?.labelStart >= 0
+                        ? renderStyledText(
+                            "studentBasicInfo",
+                            content.studentBasicInfo,
+                            sourceRange.labelStart,
+                            sourceRange.labelEnd,
+                          )
+                        : row.label}
+                    </span>
+                    <span className="break-words" style={getTextFormattingStyle("studentBasicInfo")}>
+                      {sourceRange?.valueStart >= 0
+                        ? renderStyledText(
+                            "studentBasicInfo",
+                            content.studentBasicInfo,
+                            sourceRange.valueStart,
+                            sourceRange.valueEnd,
+                          )
+                        : row.value}
+                    </span>
+                  </div>
                 );
               })}
             </div>
@@ -3585,43 +4048,47 @@ ${renderedReportModules}
     }
 
     if (key === "materialCollection") {
+      const rows =
+        materialRows.length > 0
+          ? materialRows
+          : [
+              {
+                item: "材料收集",
+                status: "na" as MaterialStatusKey,
+                statusLabel: emptySectionPlaceholder,
+                remark: emptySectionPlaceholder,
+              },
+            ];
       return (
-        <section key={key} {...sectionProps}>
-          <div data-testid="report-section">
-            <h3 className={sectionHeaderClass} style={{ color: theme.titleColor }}>
-              材料收集
-            </h3>
-            <div className="mt-2 grid grid-cols-[1fr_72px_1fr] gap-2 border-b border-slate-200 pb-2 font-semibold text-slate-500">
+        <section key={key} {...commonProps}>
+          <div data-testid={reportSectionTestId}>
+            {renderFusionSectionHeading(key, "材料收集", placement)}
+            <div className="mt-4 grid grid-cols-[1.2fr_112px_1fr] gap-3 border-b border-slate-300 pb-2 font-semibold" style={{ color: theme.mutedTextColor }}>
               <span>材料项目</span>
               <span>状态</span>
               <span>备注</span>
             </div>
-            <div className="divide-y divide-slate-100">
-              {(materialRows.length > 0
-                ? materialRows
-                : [
-                    {
-                      item: "材料收集",
-                      status: "na" as MaterialStatusKey,
-                      statusLabel: emptySectionPlaceholder,
-                      remark: emptySectionPlaceholder,
-                    },
-                  ]
-              ).map((row, index) => {
-                const style = statusStyles[row.status];
+            <div className="divide-y divide-slate-200">
+              {rows.map((row, index) => {
+                const statusStyle = statusStyles[row.status];
                 const sourceRange = materialSourceRanges[index];
+                const remarkStart =
+                  sourceRange?.valueStart >= 0
+                    ? content.materialCollectionStatus.indexOf(
+                        row.remark,
+                        sourceRange.valueStart,
+                      )
+                    : -1;
+                const remarkEnd =
+                  remarkStart >= 0 ? remarkStart + row.remark.length : -1;
                 return (
                   <div
-                    className="grid grid-cols-[1fr_72px_1fr] gap-2 py-2"
-                    key={`${row.item}-${row.remark}`}
+                    className="grid grid-cols-[1.2fr_112px_1fr] gap-3 py-2"
+                    data-pdf-break-before="true"
+                    key={`${row.item}-${row.remark}-${index}`}
                   >
-                    <span className="sr-only">
-                      {row.item}：{row.remark}
-                    </span>
-                    <span
-                      className="break-words"
-                      style={getTextFormattingStyle("materialCollectionStatus")}
-                    >
+                    <span className="sr-only">{row.item}：{row.remark}</span>
+                    <span className="break-words" style={getTextFormattingStyle("materialCollectionStatus")}>
                       {sourceRange?.labelStart >= 0
                         ? renderStyledText(
                             "materialCollectionStatus",
@@ -3632,21 +4099,18 @@ ${renderedReportModules}
                         : row.item}
                     </span>
                     <span
-                      className="inline-flex h-fit rounded-full px-2 py-1 text-[10px] font-semibold"
-                      style={{ backgroundColor: style.bg, color: style.color }}
+                      className="inline-flex h-fit w-fit rounded-full px-3 py-1 text-[16px] font-bold"
+                      style={{ backgroundColor: statusStyle.bg, color: statusStyle.color }}
                     >
                       {row.statusLabel}
                     </span>
-                    <span
-                      className="break-words"
-                      style={getTextFormattingStyle("materialCollectionStatus")}
-                    >
-                      {sourceRange?.valueStart >= 0
+                    <span className="break-words" style={getTextFormattingStyle("materialCollectionStatus")}>
+                      {remarkStart >= 0
                         ? renderStyledText(
                             "materialCollectionStatus",
                             content.materialCollectionStatus,
-                            sourceRange.valueStart,
-                            sourceRange.valueEnd,
+                            remarkStart,
+                            remarkEnd,
                           )
                         : row.remark}
                     </span>
@@ -3661,18 +4125,28 @@ ${renderedReportModules}
 
     if (key === "completedThisMonth") {
       return (
-        <section key={key} {...sectionProps}>
-          <div data-testid="report-section">
-            <h3 className={sectionHeaderClass} style={{ color: theme.titleColor }}>
-              {completedThisMonthTitle}
-            </h3>
-            <p
-              className="mt-2 whitespace-pre-line"
-              style={getTextFormattingStyle("completedThisMonth")}
-            >
-              {content.completedThisMonth.trim()
-                ? renderStyledText("completedThisMonth", content.completedThisMonth)
-                : emptySectionPlaceholder}
+        <section key={key} {...commonProps}>
+          <div data-testid={reportSectionTestId}>
+            {renderFusionSectionHeading(key, completedThisMonthTitle, placement)}
+            <p className="mt-4" style={getTextFormattingStyle("completedThisMonth")}>
+              {completedThisMonthLineRanges.length > 0 ? (
+                completedThisMonthLineRanges.map((line) => (
+                  <i
+                    className="mb-1 block not-italic last:mb-0"
+                    data-pdf-break-before="true"
+                    key={`${line.start}-${line.text}`}
+                  >
+                    {renderStyledText(
+                      "completedThisMonth",
+                      content.completedThisMonth,
+                      line.start,
+                      line.end,
+                    )}
+                  </i>
+                ))
+              ) : (
+                emptySectionPlaceholder
+              )}
             </p>
           </div>
         </section>
@@ -3681,18 +4155,13 @@ ${renderedReportModules}
 
     if (key === "nextMonthPlan") {
       return (
-        <section key={key} {...sectionProps}>
-          <div data-testid="report-section">
-            <h3 className={sectionHeaderClass} style={{ color: theme.titleColor }}>
-              {nextMonthPlanTitle}
-            </h3>
-            <div
-              className="mt-2 space-y-1"
-              style={getTextFormattingStyle("nextMonthPlan")}
-            >
+        <section key={key} {...commonProps}>
+          <div data-testid={reportSectionTestId}>
+            {renderFusionSectionHeading(key, nextMonthPlanTitle, placement)}
+            <div className="mt-4 space-y-1" style={getTextFormattingStyle("nextMonthPlan")}>
               {nextMonthPlanLineRanges.length > 0 ? (
                 nextMonthPlanLineRanges.map((line) => (
-                  <p key={`${line.start}-${line.text}`}>
+                  <p data-pdf-break-before="true" key={`${line.start}-${line.text}`}>
                     {renderStyledText(
                       "nextMonthPlan",
                       content.nextMonthPlan,
@@ -3712,18 +4181,28 @@ ${renderedReportModules}
 
     if (key === "clientTasks") {
       return (
-        <section key={key} {...sectionProps}>
-          <div data-testid="report-section">
-            <h3 className={sectionHeaderClass} style={{ color: theme.titleColor }}>
-              {clientTasksTitle}
-            </h3>
-            <p
-              className="mt-1 whitespace-pre-line"
-              style={getTextFormattingStyle("clientTasks")}
-            >
-              {content.clientTasks.trim()
-                ? renderStyledText("clientTasks", content.clientTasks)
-                : emptySectionPlaceholder}
+        <section key={key} {...commonProps}>
+          <div data-testid={reportSectionTestId}>
+            {renderFusionSectionHeading(key, clientTasksTitle, placement)}
+            <p className="mt-4" style={getTextFormattingStyle("clientTasks")}>
+              {clientTasksLineRanges.length > 0 ? (
+                clientTasksLineRanges.map((line) => (
+                  <i
+                    className="mb-1 block not-italic last:mb-0"
+                    data-pdf-break-before="true"
+                    key={`${line.start}-${line.text}`}
+                  >
+                    {renderStyledText(
+                      "clientTasks",
+                      content.clientTasks,
+                      line.start,
+                      line.end,
+                    )}
+                  </i>
+                ))
+              ) : (
+                emptySectionPlaceholder
+              )}
             </p>
           </div>
         </section>
@@ -3731,42 +4210,150 @@ ${renderedReportModules}
     }
 
     return (
-      <section key={key} {...sectionProps}>
-        <div data-testid="report-section">
-          <h3 className={sectionHeaderClass} style={{ color: theme.titleColor }}>
-            附件
-          </h3>
-          <p className="mt-1">本次报告附件：{attachmentNames}</p>
+      <section key={key} {...commonProps}>
+        <div data-testid={reportSectionTestId}>
+          {renderFusionSectionHeading(key, "附件", placement)}
+          <p className="mt-4">本次报告附件：{attachmentNames}</p>
         </div>
       </section>
     );
   }
 
-  function renderPreviewModules() {
-    const shouldPairInformationSections = modules.basicInfo && modules.materialCollection;
-    let renderedInformationPair = false;
+  function renderFusionReportDocument(exportTarget: boolean) {
+    const includeTestIds = !exportTarget;
+    const hasInformationPair = modules.basicInfo && modules.materialCollection;
+    const singleInformationModule: ReportModuleKey | null =
+      modules.basicInfo !== modules.materialCollection
+        ? modules.basicInfo
+          ? "basicInfo"
+          : "materialCollection"
+        : null;
+    const leftModuleKeys = reportModuleOrder.filter(
+      (key) => key === "timeline" || (hasInformationPair && key === "basicInfo"),
+    );
+    const rightModuleKeys = reportModuleOrder.filter(
+      (key) =>
+        key !== "timeline" &&
+        key !== "basicInfo" &&
+        key !== singleInformationModule,
+    );
 
-    return reportModuleOrder.map((key) => {
-      if (
-        shouldPairInformationSections &&
-        (key === "basicInfo" || key === "materialCollection")
-      ) {
-        if (renderedInformationPair) return null;
-        renderedInformationPair = true;
-        return (
-          <div
-            className="mx-4 my-3 grid grid-cols-2 items-stretch gap-3"
-            data-testid="basic-material-pair"
-            key="basic-material-pair"
-          >
-            {renderPreviewModule("basicInfo", true)}
-            {renderPreviewModule("materialCollection", true)}
+    return (
+      <article
+        ref={exportTarget ? exportReportRef : undefined}
+        aria-label="反馈报告导出视图"
+        className="relative isolate min-h-[1754px] w-[1240px] overflow-hidden"
+        style={{
+          backgroundColor: theme.cardColor,
+          color: theme.textColor,
+          fontFamily: theme.fontFamily,
+        }}
+      >
+        <header className="px-[58px] pb-2.5 pt-[46px]">
+          <div className="flex items-start justify-between gap-8">
+            <div className="flex min-w-0 items-center gap-[45px]">
+              <img
+                alt="新东方"
+                className="h-[52px] w-[152px] object-contain object-left"
+                src={companyLogoSrc}
+              />
+              <p className="text-[19px] font-medium" style={{ color: theme.textColor }}>
+                {content.departmentLabel}
+              </p>
+            </div>
+            <div className="flex items-center gap-3 text-[16px] font-bold">
+              {modules.season ? (
+                <span className="rounded-full px-5 py-2.5" style={{ backgroundColor: theme.secondarySoftColor, color: theme.accentColor }}>
+                  {content.season}
+                </span>
+              ) : null}
+              {modules.applicationType ? (
+                <span className="rounded-full px-5 py-2.5" style={{ backgroundColor: theme.primarySoftColor, color: theme.primaryColor }}>
+                  {applicationType}
+                </span>
+              ) : null}
+            </div>
           </div>
-        );
-      }
+          <p className="sr-only">Application Progress Report</p>
+          <span className="sr-only">第 1 页，共 {reportPageCount} 页</span>
+          <h3 className="mt-[50px] max-w-[1020px] text-[40px] font-bold leading-[1.16]" style={{ color: theme.titleColor }}>
+            {reportTitle}
+          </h3>
+          <div className="mt-5 flex flex-wrap gap-x-8 gap-y-1 text-[18px]" style={{ color: theme.textColor }}>
+            {modules.studentName ? <span>学生姓名：{content.studentName}</span> : null}
+            {modules.season ? <span>申请季度：{content.season}</span> : null}
+            {modules.applicationType ? <span>申请类型：{applicationType}</span> : null}
+            <span>报告日期：{reportDateDisplay}</span>
+          </div>
+        </header>
 
-      return renderPreviewModule(key);
-    });
+        <div
+          className="grid grid-cols-[374px_minmax(0,1fr)] items-start gap-[30px] px-[56px] pb-[56px] pt-2"
+          data-testid={includeTestIds && hasInformationPair ? "basic-material-pair" : undefined}
+        >
+          <aside
+            className="min-h-[1418px] rounded-xl p-6"
+            style={{ backgroundColor: `${theme.timelineCompletedColor}0d` }}
+          >
+            <section>
+              <h3 className="text-[24px] font-bold" style={{ color: theme.timelineCompletedColor }}>
+                学生概览
+              </h3>
+              <div className="mt-5 flex items-center gap-5">
+                <span
+                  className="flex h-[74px] w-[74px] shrink-0 items-center justify-center rounded-full text-white"
+                  style={{ backgroundColor: theme.timelineCompletedColor }}
+                >
+                  <UserRound className="h-11 w-11" aria-hidden />
+                </span>
+                <div className="min-w-0 text-[18px] leading-[1.5]">
+                  {modules.studentName ? (
+                    <p className="truncate text-[23px] font-bold" style={{ color: theme.titleColor }}>
+                      {content.studentName}
+                    </p>
+                  ) : null}
+                  {modules.season ? <p>申请季：{content.season}</p> : null}
+                  {modules.applicationType ? <p>{applicationType}</p> : null}
+                </div>
+              </div>
+              <div className="mt-6 border-t border-dashed border-slate-300 pt-5">
+                <p className="text-[24px] font-bold" style={{ color: theme.timelineCompletedColor }}>
+                  申请进度
+                </p>
+                <p className="mt-4 text-[56px] font-bold leading-none" style={{ color: theme.timelineCompletedColor }}>
+                  {completedTimelineCount} <span className="text-[28px]">/ {timelineItems.length || 1}</span>
+                </p>
+                <p className="mt-4 text-[17px]" style={{ color: theme.mutedTextColor }}>
+                  已完成 {completedTimelineCount} 个节点
+                </p>
+                <span className="mt-3 block h-3 overflow-hidden rounded-full bg-slate-300/70">
+                  <span
+                    className="block h-full rounded-full"
+                    style={{ width: `${timelineProgress}%`, backgroundColor: theme.timelineCompletedColor }}
+                  />
+                </span>
+              </div>
+            </section>
+
+            {leftModuleKeys.map((key) =>
+              renderFusionModule(key, "rail", includeTestIds, hasInformationPair),
+            )}
+          </aside>
+
+          <main className="grid min-w-0 content-start gap-0 pt-6">
+            {rightModuleKeys.map((key) =>
+              renderFusionModule(key, "main", includeTestIds, hasInformationPair),
+            )}
+          </main>
+        </div>
+
+        {singleInformationModule ? (
+          <div className="px-[56px] pb-[56px]">
+            {renderFusionModule(singleInformationModule, "full", includeTestIds, false)}
+          </div>
+        ) : null}
+      </article>
+    );
   }
 
   return (
@@ -3839,7 +4426,7 @@ ${renderedReportModules}
             <label className="grid gap-1 text-sm font-medium">
               本次报告标题
               <input
-                className="rounded-lg border border-slate-300 px-3 py-2 text-sm"
+                className="rounded-lg border border-blue-200 bg-blue-50 px-3 py-2 text-sm shadow-inner outline-none transition focus:border-blue-400 focus:bg-white focus:ring-2 focus:ring-blue-100"
                 value={content.title}
                 onChange={(event) => updateContent("title", event.target.value)}
               />
@@ -4154,6 +4741,143 @@ ${renderedReportModules}
             </div>
 
             <div className="mt-4 grid gap-4 lg:grid-cols-2">
+              <section className="grid gap-3 rounded-lg border border-slate-200 bg-slate-50 p-3 lg:col-span-2">
+                <label className="grid gap-1 text-sm font-medium">
+                  当前阶段重点和下一步建议板块标题
+                  <input
+                    aria-label="当前阶段重点和下一步建议板块标题"
+                    className="rounded-lg border border-blue-200 bg-blue-50 px-3 py-2 text-sm shadow-inner outline-none transition focus:border-blue-400 focus:bg-white focus:ring-2 focus:ring-blue-100"
+                    value={content.stageFocusTitle}
+                    onChange={(event) =>
+                      updateContent("stageFocusTitle", event.target.value)
+                    }
+                  />
+                </label>
+                <div className="grid gap-3 lg:grid-cols-2">
+                  <div className="grid gap-2 rounded-lg border border-slate-200 bg-white p-3">
+                    <label className="grid gap-1 text-sm font-medium">
+                      当前阶段重点标题
+                      <input
+                        aria-label="当前阶段重点标题"
+                        className="rounded-lg border border-blue-200 bg-blue-50 px-3 py-2 text-sm shadow-inner outline-none transition focus:border-blue-400 focus:bg-white focus:ring-2 focus:ring-blue-100"
+                        value={content.currentStageFocusTitle}
+                        onChange={(event) =>
+                          updateContent("currentStageFocusTitle", event.target.value)
+                        }
+                      />
+                    </label>
+                    <label className="grid gap-1 text-sm font-medium">
+                      当前阶段重点内容
+                      <textarea
+                        aria-label="当前阶段重点内容"
+                        className="min-h-24 rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm leading-6"
+                        value={content.currentStageFocus}
+                        onChange={(event) =>
+                          updateContent("currentStageFocus", event.target.value)
+                        }
+                      />
+                    </label>
+                  </div>
+                  <div className="grid gap-2 rounded-lg border border-slate-200 bg-white p-3">
+                    <label className="grid gap-1 text-sm font-medium">
+                      下一步建议标题
+                      <input
+                        aria-label="下一步建议标题"
+                        className="rounded-lg border border-blue-200 bg-blue-50 px-3 py-2 text-sm shadow-inner outline-none transition focus:border-blue-400 focus:bg-white focus:ring-2 focus:ring-blue-100"
+                        value={content.nextStageFocusTitle}
+                        onChange={(event) =>
+                          updateContent("nextStageFocusTitle", event.target.value)
+                        }
+                      />
+                    </label>
+                    <label className="grid gap-1 text-sm font-medium">
+                      下一步建议内容
+                      <textarea
+                        aria-label="下一步建议内容"
+                        className="min-h-24 rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm leading-6"
+                        value={content.nextStageFocus}
+                        onChange={(event) =>
+                          updateContent("nextStageFocus", event.target.value)
+                        }
+                      />
+                    </label>
+                  </div>
+                </div>
+              </section>
+
+              <section className="grid gap-3 rounded-lg border border-slate-200 bg-slate-50 p-3 lg:col-span-2">
+                <label className="grid gap-1 text-sm font-medium">
+                  关键摘要板块标题
+                  <input
+                    aria-label="关键摘要板块标题"
+                    className="rounded-lg border border-blue-200 bg-blue-50 px-3 py-2 text-sm shadow-inner outline-none transition focus:border-blue-400 focus:bg-white focus:ring-2 focus:ring-blue-100"
+                    value={content.summaryTitle}
+                    onChange={(event) =>
+                      updateContent("summaryTitle", event.target.value)
+                    }
+                  />
+                </label>
+                <div className="grid gap-3 md:grid-cols-3">
+                  {[
+                    {
+                      id: "material",
+                      titleLabel: "关键摘要材料标题",
+                      valueLabel: "关键摘要材料内容",
+                      title: content.summaryMaterialTitle,
+                      value: summaryMaterialValue,
+                      titleField: "summaryMaterialTitle" as const,
+                      valueField: "summaryMaterialValue" as const,
+                    },
+                    {
+                      id: "academic",
+                      titleLabel: "关键摘要学术标题",
+                      valueLabel: "关键摘要学术内容",
+                      title: content.summaryAcademicTitle,
+                      value: summaryAcademicValue,
+                      titleField: "summaryAcademicTitle" as const,
+                      valueField: "summaryAcademicValue" as const,
+                    },
+                    {
+                      id: "school",
+                      titleLabel: "关键摘要学校标题",
+                      valueLabel: "关键摘要学校内容",
+                      title: content.summarySchoolTitle,
+                      value: summarySchoolValue,
+                      titleField: "summarySchoolTitle" as const,
+                      valueField: "summarySchoolValue" as const,
+                    },
+                  ].map((item) => (
+                    <div
+                      className="grid gap-2 rounded-lg border border-slate-200 bg-white p-3"
+                      key={item.id}
+                    >
+                      <label className="grid gap-1 text-sm font-medium">
+                        {item.titleLabel}
+                        <input
+                          aria-label={item.titleLabel}
+                          className="rounded-lg border border-blue-200 bg-blue-50 px-3 py-2 text-sm shadow-inner outline-none transition focus:border-blue-400 focus:bg-white focus:ring-2 focus:ring-blue-100"
+                          value={item.title}
+                          onChange={(event) =>
+                            updateContent(item.titleField, event.target.value)
+                          }
+                        />
+                      </label>
+                      <label className="grid gap-1 text-sm font-medium">
+                        {item.valueLabel}
+                        <textarea
+                          aria-label={item.valueLabel}
+                          className="min-h-20 rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm leading-6"
+                          value={item.value}
+                          onChange={(event) =>
+                            updateContent(item.valueField, event.target.value)
+                          }
+                        />
+                      </label>
+                    </div>
+                  ))}
+                </div>
+              </section>
+
               <ReportTextEditor
                 formatting={textFormatting.completedThisMonth}
                 formattingRanges={textFormattingRanges.completedThisMonth}
@@ -4448,71 +5172,12 @@ ${renderedReportModules}
           data-testid="monthly-report-preview"
           style={previewStyle}
         >
-          <article
-            className="overflow-hidden rounded-lg bg-white"
-            style={{ borderTop: `2px solid ${theme.primaryColor}` }}
-          >
-            <h2 className="sr-only">报告预览</h2>
-            <header className="flex items-center justify-between gap-3 px-4 py-3">
-              <div className="flex items-center gap-3">
-                <img
-                  alt="新东方"
-                  className="h-7 w-auto max-w-28 object-contain"
-                  src={companyLogoSrc}
-                />
-                <p className="text-xs" style={{ color: theme.mutedTextColor }}>
-                  {content.departmentLabel}
-                </p>
-              </div>
-              <div className="flex flex-wrap justify-end gap-1.5 text-xs font-semibold">
-                {modules.season ? (
-                  <span
-                    className="rounded-full px-2.5 py-1"
-                    style={{
-                      backgroundColor: theme.secondarySoftColor,
-                      color: theme.accentColor,
-                    }}
-                  >
-                    {content.season}
-                  </span>
-                ) : null}
-                {modules.applicationType ? (
-                  <span
-                    className="rounded-full px-2.5 py-1"
-                    style={{
-                      backgroundColor: theme.primarySoftColor,
-                      color: theme.primaryColor,
-                    }}
-                  >
-                    {applicationType}
-                  </span>
-                ) : null}
-              </div>
-            </header>
-
-            <section
-              className="mx-4 grid gap-3 rounded-2xl px-4 py-4 text-white"
-              style={{ background: theme.gradient }}
-            >
-              <div>
-                <p className="text-[11px] font-semibold uppercase tracking-[0.08em] text-white/80">
-                  Application Progress Report
-                </p>
-                <h3 className="mt-2 text-2xl font-bold leading-tight">
-                  {reportTitle}
-                </h3>
-                <div className="mt-3 flex flex-wrap gap-2 text-xs text-white/90">
-                  {modules.studentName ? <span>学生姓名：{content.studentName}</span> : null}
-                  {modules.season ? <span>申请季度：{content.season}</span> : null}
-                  {modules.applicationType ? <span>申请类型：{applicationType}</span> : null}
-                  <span>报告日期：{reportDateDisplay}</span>
-                </div>
-              </div>
-            </section>
-
-            {renderPreviewModules()}
-
-          </article>
+          <h2 className="sr-only">报告预览</h2>
+          <div className="overflow-auto rounded-lg bg-slate-100 p-2">
+            <div className="mx-auto w-[1240px] origin-top-left [zoom:0.26] sm:[zoom:0.45] lg:[zoom:0.75] 2xl:[zoom:0.3]">
+              {renderFusionReportDocument(false)}
+            </div>
+          </div>
 
           <section className="mt-5 rounded-lg border border-slate-200 bg-slate-50 p-3">
             <h2 className="flex items-center gap-2 text-base font-semibold">
@@ -4566,6 +5231,15 @@ ${renderedReportModules}
           </section>
         </aside>
       </div>
+
+      {shouldRenderExportTarget ? (
+        <div
+          aria-hidden="true"
+          className="pointer-events-none fixed left-[-20000px] top-0"
+        >
+          {renderFusionReportDocument(true)}
+        </div>
+      ) : null}
 
     </section>
   );

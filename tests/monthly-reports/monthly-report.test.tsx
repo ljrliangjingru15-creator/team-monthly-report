@@ -287,6 +287,80 @@ describe("monthly reports page", () => {
     expect(within(orderedSections[0]).getByText("下一步建议")).toBeInTheDocument();
   });
 
+  it("allows counselors to edit stage focus and summary titles and content", () => {
+    render(<MonthlyReportsPage />);
+
+    const preview = screen.getByTestId("monthly-report-preview");
+
+    expect(
+      screen.getByLabelText("当前阶段重点和下一步建议板块标题"),
+    ).toHaveValue("当前阶段重点和下一步建议");
+    expect(screen.getByLabelText("当前阶段重点内容")).toHaveValue(
+      "早申请准备",
+    );
+    expect(screen.getByLabelText("关键摘要材料内容")).toHaveValue("待填写");
+
+    fireEvent.change(
+      screen.getByLabelText("当前阶段重点和下一步建议板块标题"),
+      { target: { value: "本周申请重点" } },
+    );
+    fireEvent.change(screen.getByLabelText("当前阶段重点内容"), {
+      target: { value: "完成早申系统检查" },
+    });
+    fireEvent.change(screen.getByLabelText("下一步建议内容"), {
+      target: { value: "确认推荐信递交状态" },
+    });
+    fireEvent.change(screen.getByLabelText("关键摘要板块标题"), {
+      target: { value: "申请概览" },
+    });
+    fireEvent.change(screen.getByLabelText("关键摘要材料标题"), {
+      target: { value: "材料进度" },
+    });
+    fireEvent.change(screen.getByLabelText("关键摘要材料内容"), {
+      target: { value: "6/8" },
+    });
+
+    expect(preview).toHaveTextContent("本周申请重点");
+    expect(preview).toHaveTextContent("完成早申系统检查");
+    expect(preview).toHaveTextContent("确认推荐信递交状态");
+    expect(preview).toHaveTextContent("申请概览");
+    expect(preview).toHaveTextContent("材料进度");
+    expect(preview).toHaveTextContent("6/8");
+  });
+
+  it("only applies the emphasis block after a module is marked as highlighted", () => {
+    render(<MonthlyReportsPage />);
+
+    const feedbackSection = screen.getByTestId(
+      "report-section-completedThisMonth",
+    );
+    expect(feedbackSection).toHaveAttribute("data-highlighted", "false");
+    expect(feedbackSection.style.backgroundColor).toBe("transparent");
+    expect(feedbackSection).not.toHaveClass("border-l-[6px]");
+
+    fireEvent.click(screen.getByLabelText("重点展示阶段性反馈"));
+
+    expect(feedbackSection).toHaveAttribute("data-highlighted", "true");
+    expect(feedbackSection).toHaveClass("border-l-[6px]");
+    expect(feedbackSection).toHaveStyle({
+      backgroundColor: "#fff7ed",
+      borderLeftColor: "#f59e0b",
+    });
+  });
+
+  it("uses a tinted background for title inputs", () => {
+    render(<MonthlyReportsPage />);
+
+    [
+      "本次报告标题",
+      "当前阶段重点和下一步建议板块标题",
+      "关键摘要板块标题",
+      "阶段性反馈板块标题",
+    ].forEach((label) => {
+      expect(screen.getByLabelText(label)).toHaveClass("bg-blue-50");
+    });
+  });
+
   it("allows report sections to be hidden, highlighted, and reordered", () => {
     render(<MonthlyReportsPage />);
 
@@ -548,6 +622,9 @@ describe("monthly reports page", () => {
     );
     expect(screen.getByLabelText("需要学生/家庭配合")).toHaveValue(
       "请学生补充奖项证明和护照信息。",
+    );
+    expect(screen.getByLabelText("下一步建议内容")).toHaveValue(
+      "下一阶段重点关注推荐信确认。",
     );
   });
 
