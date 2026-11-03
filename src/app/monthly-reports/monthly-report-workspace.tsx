@@ -12,6 +12,9 @@ import {
   FileText,
   GraduationCap,
   GripVertical,
+  Eye,
+  Maximize2,
+  Minimize2,
   Paperclip,
   Palette,
   Plus,
@@ -25,14 +28,26 @@ import {
   UserRound,
   UsersRound,
   Wand2,
+  X,
 } from "lucide-react";
-import { useEffect, useMemo, useRef, useState } from "react";
+import {
+  type DragEvent,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+} from "react";
 import {
   APPLICATION_TYPE_OPTIONS,
   getMonthlyReportApplicationConfig,
   type MonthlyReportApplicationType,
   type MonthlyReportTheme,
 } from "@/features/monthly-reports/application-types";
+import {
+  extractLegacyOcrSection,
+  normalizeLegacyReportText,
+  type LegacyPdfExtraction,
+} from "@/features/monthly-reports/legacy-pdf-report";
 
 type EditableReportContent = {
   title: string;
@@ -69,6 +84,24 @@ type AttachmentItem = {
   name: string;
   size: number;
   type: string;
+  previewKind: "image" | "pdf" | "text" | "file";
+  previewUrl: string;
+  textContent: string;
+};
+
+type SchoolApplicationColumn = {
+  id: string;
+  label: string;
+};
+
+type SchoolApplicationRow = {
+  id: string;
+  values: Record<string, string>;
+};
+
+type SchoolApplicationTable = {
+  columns: SchoolApplicationColumn[];
+  rows: SchoolApplicationRow[];
 };
 
 type TimelineStatus = "completed" | "current" | "pending";
@@ -96,6 +129,7 @@ type ModuleVisibility = {
   timeline: boolean;
   basicInfo: boolean;
   materialCollection: boolean;
+  schoolApplications: boolean;
   completedThisMonth: boolean;
   nextMonthPlan: boolean;
   clientTasks: boolean;
@@ -141,16 +175,31 @@ type ReportModuleKey =
   | "timeline"
   | "basicInfo"
   | "materialCollection"
+  | "schoolApplications"
   | "completedThisMonth"
   | "nextMonthPlan"
   | "clientTasks"
   | "attachments";
+
+type ReportModuleWidth = "compact" | "wide";
 
 type ExportFormat = "PDF" | "PNG";
 
 type ReportPageSlice = {
   start: number;
   end: number;
+};
+
+type ReportPdfLayout = {
+  breakPositions: number[];
+  repeatHeaderHeight: number;
+  continuationContentTop: number;
+  bottomMargin: number;
+  railX: number;
+  railWidth: number;
+  mainX: number;
+  mainWidth: number;
+  reportWidth: number;
 };
 
 type KeyValueRow = {
@@ -167,14 +216,97 @@ type MaterialReportRow = {
   remark: string;
 };
 
+type PreviousReportStateV1 = {
+  version: 1;
+  applicationType: MonthlyReportApplicationType;
+  content: EditableReportContent;
+  timelineItems: TimelineItem[];
+  theme: MonthlyReportTheme;
+  modules: ModuleVisibility;
+  reportModuleOrder: ReportModuleKey[];
+  reportModuleWidths: Record<ReportModuleKey, ReportModuleWidth>;
+  highlightedModules: Record<ReportModuleKey, boolean>;
+  textFormatting: TextFormattingMap;
+  textFormattingRanges: TextFormattingRangeMap;
+  schoolApplicationColumns: SchoolApplicationColumn[];
+  schoolApplications: SchoolApplicationRow[];
+};
+
 const initialApplicationType: MonthlyReportApplicationType = "美国本科新生";
 const companyLogoSrc = "/new-oriental-logo-2026.png";
 const reportPagePixelHeight = 1754;
+const previousReportStatePrefix = "MONTHLY_REPORT_STATE_V1:";
+const schoolApplicationFieldDefinitions = [
+  {
+    id: "university-english-name",
+    label: "申请大学英文名称",
+    aliases: [
+      "申请大学英文名称",
+      "申请院校英文名称",
+      "大学英文名称",
+      "申请院校",
+      "院校名称",
+      "申请学校",
+      "学校名称",
+      "目标院校",
+    ],
+  },
+  {
+    id: "application-college",
+    label: "申请学院",
+    aliases: ["申请学院", "申请院系", "学院", "院系"],
+  },
+  {
+    id: "application-major",
+    label: "专业",
+    aliases: ["专业", "申请专业", "意向专业"],
+  },
+  {
+    id: "application-round",
+    label: "申请轮次",
+    aliases: ["申请轮次", "申请批次", "轮次", "批次"],
+  },
+  {
+    id: "application-deadline",
+    label: "申请截止时间",
+    aliases: ["申请截止时间", "申请截止日期", "截止时间", "截止日期"],
+  },
+  {
+    id: "materials-complete",
+    label: "材料是否齐全",
+    aliases: ["材料是否齐全", "材料齐全情况", "材料状态", "申请材料状态"],
+  },
+  {
+    id: "application-status",
+    label: "申请状态",
+    aliases: ["申请状态", "递交状态", "网申状态"],
+    includeByDefault: false,
+  },
+  {
+    id: "admission-result",
+    label: "录取结果",
+    aliases: ["录取结果", "申请结果", "录取状态"],
+  },
+  {
+    id: "admitted-program",
+    label: "录取专业和学院",
+    aliases: ["录取专业和学院", "录取专业及学院", "录取学院和专业"],
+  },
+] as const;
 
-function buildReportPageSlices(
+const defaultSchoolApplicationColumns: SchoolApplicationColumn[] =
+  schoolApplicationFieldDefinitions
+    .filter(
+      (definition) =>
+        !("includeByDefault" in definition) || definition.includeByDefault !== false,
+    )
+    .map(({ id, label }) => ({ id, label }));
+
+export function buildReportPageSlices(
   totalHeight: number,
-  maximumPageHeight: number,
+  firstPageHeight: number,
   breakPositions: number[],
+  continuationPageHeight = firstPageHeight,
 ): ReportPageSlice[] {
   const sortedBreakPositions = [...new Set(breakPositions)]
     .filter((position) => position > 0 && position < totalHeight)
@@ -182,16 +314,28 @@ function buildReportPageSlices(
   const slices: ReportPageSlice[] = [];
   let start = 0;
 
-  while (totalHeight - start > maximumPageHeight + 1) {
-    const idealEnd = start + maximumPageHeight;
-    const minimumPreferredEnd = start + maximumPageHeight * 0.55;
+  while (
+    totalHeight - start >
+    (slices.length === 0 ? firstPageHeight : continuationPageHeight) + 1
+  ) {
+    const pageHeight =
+      slices.length === 0 ? firstPageHeight : continuationPageHeight;
+    const idealEnd = start + pageHeight;
     const preferredBreak = sortedBreakPositions
       .filter(
         (position) =>
-          position >= minimumPreferredEnd && position <= idealEnd - 8,
+          position > start + 8 && position <= idealEnd - 8,
       )
       .at(-1);
-    const end = preferredBreak ?? idealEnd;
+    const startsAtModule = sortedBreakPositions.some(
+      (position) => Math.abs(position - start) <= 8,
+    );
+    const nextModuleStart = sortedBreakPositions.find(
+      (position) => position > start + 8,
+    );
+    const end =
+      preferredBreak ??
+      (startsAtModule ? (nextModuleStart ?? totalHeight) : idealEnd);
     slices.push({ start, end });
     start = end;
   }
@@ -319,6 +463,7 @@ const defaultModules: ModuleVisibility = {
   timeline: true,
   basicInfo: true,
   materialCollection: true,
+  schoolApplications: false,
   completedThisMonth: true,
   nextMonthPlan: true,
   clientTasks: true,
@@ -337,6 +482,7 @@ const moduleLabels: Array<{
   { key: "timeline", label: "展示申请时间轴" },
   { key: "basicInfo", label: "展示基础信息" },
   { key: "materialCollection", label: "展示材料收集" },
+  { key: "schoolApplications", label: "展示院校申请" },
   { key: "completedThisMonth", label: "展示阶段性反馈" },
   { key: "nextMonthPlan", label: "展示下一阶段计划" },
   { key: "clientTasks", label: "展示需要学生/家庭配合" },
@@ -349,11 +495,25 @@ const defaultReportModuleOrder: ReportModuleKey[] = [
   "timeline",
   "basicInfo",
   "materialCollection",
+  "schoolApplications",
   "completedThisMonth",
   "nextMonthPlan",
   "clientTasks",
   "attachments",
 ];
+
+const defaultReportModuleWidths: Record<ReportModuleKey, ReportModuleWidth> = {
+  stageFocus: "wide",
+  summary: "wide",
+  timeline: "compact",
+  basicInfo: "compact",
+  materialCollection: "wide",
+  schoolApplications: "wide",
+  completedThisMonth: "wide",
+  nextMonthPlan: "wide",
+  clientTasks: "wide",
+  attachments: "wide",
+};
 
 const reportModuleLabels: Record<ReportModuleKey, string> = {
   stageFocus: "当前阶段重点和下一步建议",
@@ -361,6 +521,7 @@ const reportModuleLabels: Record<ReportModuleKey, string> = {
   timeline: "申请时间轴",
   basicInfo: "基础信息",
   materialCollection: "材料收集",
+  schoolApplications: "院校申请",
   completedThisMonth: "阶段性反馈",
   nextMonthPlan: "下一阶段计划",
   clientTasks: "需要学生/家庭配合",
@@ -373,6 +534,7 @@ const reportModuleToggleLabels: Record<ReportModuleKey, string> = {
   timeline: "展示申请时间轴",
   basicInfo: "展示基础信息",
   materialCollection: "展示材料收集",
+  schoolApplications: "展示院校申请",
   completedThisMonth: "展示阶段性反馈",
   nextMonthPlan: "展示下一阶段计划",
   clientTasks: "展示需要学生/家庭配合",
@@ -883,13 +1045,33 @@ function sanitizeFileNameSegment(value: string) {
   return value.replace(/[\\/:*?"<>|]+/g, "").replace(/\s+/g, " ").trim();
 }
 
-function filesToAttachments(files: FileList | File[] | null | undefined) {
-  return Array.from(files ?? []).map((file, index) => ({
-    id: `${file.name}-${file.size}-${index}`,
-    name: file.name,
-    size: file.size,
-    type: file.type || "未知类型",
-  }));
+function getAttachmentPreviewKind(file: File): AttachmentItem["previewKind"] {
+  const lowerName = file.name.toLowerCase();
+  if (file.type.startsWith("image/")) return "image";
+  if (file.type === "application/pdf" || lowerName.endsWith(".pdf")) return "pdf";
+  if (shouldReadUploadedFileAsText(file)) return "text";
+  return "file";
+}
+
+function filesToAttachments(
+  files: FileList | File[] | null | undefined,
+) {
+  return Array.from(files ?? []).map((file, index) => {
+      const previewKind = getAttachmentPreviewKind(file);
+      const previewUrl =
+        typeof URL !== "undefined" && typeof URL.createObjectURL === "function"
+          ? URL.createObjectURL(file)
+          : "";
+      return {
+        id: `${file.name}-${file.size}-${Date.now()}-${index}`,
+        name: file.name,
+        size: file.size,
+        type: file.type || "未知类型",
+        previewKind,
+        previewUrl,
+        textContent: "",
+      } satisfies AttachmentItem;
+    });
 }
 
 function shouldReadUploadedFileAsText(file: File) {
@@ -924,7 +1106,7 @@ function isMeaningfulRecognizedValue(value: string) {
 }
 
 function extractLabeledValue(rawText: string, labels: string[]) {
-  const normalized = rawText.replace(/\r/g, "\n").replace(/\u2028/g, "\n");
+  const normalized = normalizeLegacyReportText(rawText);
   const segments = normalized
     .split(/[\n；;|｜]+/)
     .map((segment) => segment.trim())
@@ -953,18 +1135,8 @@ function extractLabeledValue(rawText: string, labels: string[]) {
   return "";
 }
 
-function extractFieldList(rawText: string, labels: string[]) {
-  return labels
-    .map((label) => {
-      const value = extractLabeledValue(rawText, [label]);
-      return value ? `${label}：${value}` : "";
-    })
-    .filter(Boolean)
-    .join("\n");
-}
-
 function normalizeRecognizedLabel(label: string) {
-  return label.replace(/\s+/g, "").trim();
+  return label.normalize("NFKC").replace(/\s+/g, "").trim();
 }
 
 function canonicalizeRecognizedLabel(label: string) {
@@ -1116,25 +1288,174 @@ function fieldsFromSpreadsheetRows(rows: string[][], studentName: string) {
   return fieldsFromTableRows(rows, studentName);
 }
 
+function getSchoolApplicationFieldDefinition(value: string) {
+  const normalized = normalizeRecognizedLabel(value);
+  return schoolApplicationFieldDefinitions.find((definition) =>
+    definition.aliases.some(
+      (alias) => normalizeRecognizedLabel(alias) === normalized,
+    ),
+  );
+}
+
+function isSchoolApplicationHeader(value: string) {
+  return (
+    getSchoolApplicationFieldDefinition(value)?.id ===
+    "university-english-name"
+  );
+}
+
+function buildSchoolColumnId(label: string, index: number) {
+  const definition = getSchoolApplicationFieldDefinition(label);
+  if (definition) return definition.id;
+  return `school-column-${sanitizeFileNameSegment(normalizeRecognizedLabel(label)) || index}`;
+}
+
+function schoolApplicationTableFromRows(
+  rows: string[][],
+  studentName: string,
+  options: { preserveSourceHeaders?: boolean } = {},
+): SchoolApplicationTable | null {
+  for (let headerIndex = 0; headerIndex < rows.length; headerIndex += 1) {
+    const headerRow = rows[headerIndex].map(normalizeSpreadsheetValue);
+    const schoolNameIndex = headerRow.findIndex(isSchoolApplicationHeader);
+    if (schoolNameIndex < 0) continue;
+
+    const sourceIndexByColumnId = new Map<string, number>();
+    headerRow.forEach((header, sourceIndex) => {
+      const definition = getSchoolApplicationFieldDefinition(header);
+      if (definition && !sourceIndexByColumnId.has(definition.id)) {
+        sourceIndexByColumnId.set(definition.id, sourceIndex);
+      }
+    });
+    const columns = options.preserveSourceHeaders
+      ? headerRow.flatMap((header, sourceIndex) => {
+          const definition = getSchoolApplicationFieldDefinition(header);
+          if (!definition || sourceIndexByColumnId.get(definition.id) !== sourceIndex) {
+            return [];
+          }
+          return [{ id: definition.id, label: definition.label }];
+        })
+      : defaultSchoolApplicationColumns.map((column) => ({ ...column }));
+    const studentNameIndex = headerRow.findIndex((header) =>
+      ["学生姓名", "姓名"].includes(normalizeRecognizedLabel(header)),
+    );
+    const normalizedStudentName = normalizeRecognizedLabel(studentName);
+    const candidateRows = rows
+      .slice(headerIndex + 1)
+      .map((row) => row.map(normalizeSpreadsheetValue))
+      .filter((row) => row.some(Boolean));
+    const matchingStudentRows =
+      studentNameIndex >= 0 && normalizedStudentName
+        ? candidateRows.filter((row) => {
+            const rowName = normalizeRecognizedLabel(row[studentNameIndex] ?? "");
+            return (
+              rowName === normalizedStudentName ||
+              Boolean(rowName && rowName.includes(normalizedStudentName))
+            );
+          })
+        : [];
+    const sourceRows = matchingStudentRows.length > 0 ? matchingStudentRows : candidateRows;
+    const schoolRows = sourceRows
+      .filter((row) => {
+        const schoolName = row[schoolNameIndex] ?? "";
+        return (
+          isMeaningfulRecognizedValue(schoolName) &&
+          !isSchoolApplicationHeader(schoolName)
+        );
+      })
+      .map((row, rowIndex) => {
+        const admittedCollegeIndex = headerRow.findIndex(
+          (header) => normalizeRecognizedLabel(header) === "录取学院",
+        );
+        const admittedMajorIndex = headerRow.findIndex(
+          (header) => normalizeRecognizedLabel(header) === "录取专业",
+        );
+        const values = Object.fromEntries(
+          columns.map((column) => {
+            const sourceIndex = sourceIndexByColumnId.get(column.id);
+            let value = sourceIndex === undefined ? "" : row[sourceIndex] ?? "";
+            if (column.id === "admitted-program" && !value) {
+              value = [
+                admittedCollegeIndex >= 0 ? row[admittedCollegeIndex] : "",
+                admittedMajorIndex >= 0 ? row[admittedMajorIndex] : "",
+              ]
+                .filter(isMeaningfulRecognizedValue)
+                .join(" / ");
+            }
+            return [column.id, value];
+          }),
+        );
+        return {
+          id: `school-row-${headerIndex}-${rowIndex}`,
+          values,
+        };
+      });
+
+    if (schoolRows.length > 0) return { columns, rows: schoolRows };
+  }
+
+  return null;
+}
+
+function mergeSchoolApplicationTables(
+  tables: SchoolApplicationTable[],
+): SchoolApplicationTable | null {
+  if (tables.length === 0) return null;
+  const columns: SchoolApplicationColumn[] = [];
+  const columnIdByLabel = new Map<string, string>();
+
+  tables.forEach((table) => {
+    table.columns.forEach((column) => {
+      const normalizedLabel = normalizeRecognizedLabel(column.label);
+      if (columnIdByLabel.has(normalizedLabel)) return;
+      const id = buildSchoolColumnId(column.label, columns.length);
+      columnIdByLabel.set(normalizedLabel, id);
+      columns.push({ id, label: column.label });
+    });
+  });
+
+  const rows = tables.flatMap((table, tableIndex) =>
+    table.rows.map((row, rowIndex) => {
+      const values: Record<string, string> = {};
+      table.columns.forEach((column) => {
+        const targetId = columnIdByLabel.get(normalizeRecognizedLabel(column.label));
+        if (targetId) values[targetId] = row.values[column.id] ?? "";
+      });
+      return { id: `school-row-${tableIndex}-${rowIndex}`, values };
+    }),
+  );
+
+  return { columns, rows };
+}
+
 async function parseSpreadsheetFile(file: File, studentName: string) {
   if (file.name.toLowerCase().endsWith(".csv") || file.type === "text/csv") {
-    return fieldsFromSpreadsheetRows(parseCsvRows(await file.text()), studentName);
+    const rows = parseCsvRows(await file.text());
+    return {
+      fields: fieldsFromSpreadsheetRows(rows, studentName),
+      schoolApplicationTable: schoolApplicationTableFromRows(rows, studentName),
+    };
   }
 
   const XLSX = await import("xlsx");
   const workbook = XLSX.read(await file.arrayBuffer(), { type: "array" });
-  const rows = workbook.SheetNames.flatMap((sheetName) =>
+  const sheetRows = workbook.SheetNames.map((sheetName) =>
     XLSX.utils.sheet_to_json<unknown[]>(workbook.Sheets[sheetName], {
       header: 1,
       blankrows: false,
       defval: "",
-    }),
+    }).map((row) => row.map(normalizeSpreadsheetValue)),
   );
+  const rows = sheetRows.flat();
 
-  return fieldsFromSpreadsheetRows(
-    rows.map((row) => row.map(normalizeSpreadsheetValue)),
-    studentName,
-  );
+  return {
+    fields: fieldsFromSpreadsheetRows(rows, studentName),
+    schoolApplicationTable: mergeSchoolApplicationTables(
+      sheetRows
+        .map((sheet) => schoolApplicationTableFromRows(sheet, studentName))
+        .filter((table): table is SchoolApplicationTable => Boolean(table)),
+    ),
+  };
 }
 
 function buildContentFromRecognizedFields(fields: RecognizedField[]) {
@@ -1207,12 +1528,14 @@ function mergeRecognizedFields(
 }
 
 const previousReportHeadings = [
+  "关键摘要",
+  "申请时间轴",
+  "院校申请",
+  "院校申请进度",
   "基础信息",
   "学生基础信息",
   "材料收集",
   "材料收集情况",
-  "申请截图识别",
-  "截图识别结果",
   "阶段性反馈",
   "本次阶段性进度",
   "本月完成情况",
@@ -1225,10 +1548,13 @@ const previousReportHeadings = [
   "学生/家庭待办",
   "学生/家庭待办 / 需要学生/家庭配合",
   "需要学生/家庭配合",
+  "附件",
+  "附件展示",
 ];
 
 function normalizeReportText(rawText: string) {
-  return rawText
+  return normalizeLegacyReportText(
+    rawText
     .replace(/\r/g, "\n")
     .replace(/\u2028/g, "\n")
     .replace(/<br\s*\/?>/gi, "\n")
@@ -1240,7 +1566,8 @@ function normalizeReportText(rawText: string) {
     .replace(/&amp;/g, "&")
     .replace(/&lt;/g, "<")
     .replace(/&gt;/g, ">")
-    .replace(/&quot;/g, '"');
+    .replace(/&quot;/g, '"'),
+  );
 }
 
 function normalizeReportHeading(line: string) {
@@ -1250,14 +1577,16 @@ function normalizeReportHeading(line: string) {
 function isReportHeadingMatch(line: string, heading: string) {
   const normalizedLine = normalizeReportHeading(line);
   const normalizedHeading = normalizeReportHeading(heading);
-  return (
-    normalizedLine === normalizedHeading ||
-    normalizedLine.includes(normalizedHeading) ||
-    normalizedLine
-      .split("/")
-      .map((part) => part.trim())
-      .includes(normalizedHeading)
-  );
+  if (normalizedLine === normalizedHeading) return true;
+  return normalizedLine
+    .split("/")
+    .map((part) => part.trim())
+    .some(
+      (part) =>
+        part === normalizedHeading ||
+        (part.endsWith(normalizedHeading) &&
+          part.length - normalizedHeading.length <= 4),
+    );
 }
 
 function extractReportSection(rawText: string, heading: string) {
@@ -1288,77 +1617,144 @@ function extractReportSection(rawText: string, heading: string) {
   return extractLabeledValue(normalized, [heading]);
 }
 
-function parseApplicationScreenshotStatus(rawText: string, fileName: string) {
-  const materialStatus = extractLabeledValue(rawText, [
-    "材料收集情况",
-    "材料收集状态",
-    "材料收集",
-  ]);
-  const submissionStatus = extractLabeledValue(rawText, [
-    "申请院校提交情况",
-    "院校提交情况",
-    "申请提交情况",
-    "提交情况",
-  ]);
-  const lines = [
-    materialStatus ? `材料收集情况：${materialStatus}` : "",
-    submissionStatus ? `申请院校提交情况：${submissionStatus}` : "",
-  ].filter(Boolean);
+function buildTimelineFromLegacyReport(
+  applicationType: MonthlyReportApplicationType,
+  rawText: string,
+  currentStageFocus: string,
+) {
+  const timeline = buildDefaultTimeline(applicationType);
+  const normalizedText = normalizeLegacyReportText(rawText);
+  const normalizedFocus = normalizeRecognizedLabel(currentStageFocus);
+  let currentIndex = timeline.findIndex((item) => {
+    const escapedLabel = escapeRegExp(item.label);
+    return new RegExp(
+      `${escapedLabel}.{0,16}(?:进行中|当前|本阶段重点)`,
+      "i",
+    ).test(normalizedText);
+  });
 
-  if (lines.length > 0) return lines.join("\n");
-  if (/材料|提交|申请|院校/.test(fileName)) {
-    return `已上传申请截图：${fileName}\n未识别到材料收集或院校提交文字，可在此处手动补充。`;
+  if (currentIndex < 0 && normalizedFocus) {
+    currentIndex = timeline.findIndex((item) =>
+      normalizedFocus.includes(normalizeRecognizedLabel(item.label)),
+    );
   }
 
-  return "";
-}
-
-function parseApplicationScreenshotContent(rawText: string, fileName: string) {
-  const studentBasicInfo = extractFieldList(rawText, studentBasicInfoFields);
-  const materialCollectionStatus = extractFieldList(rawText, materialCollectionFields);
-  const hasStructuredFields = Boolean(studentBasicInfo || materialCollectionStatus);
-  const statusSummary = hasStructuredFields
-    ? ""
-    : parseApplicationScreenshotStatus(rawText, fileName);
-  const recognizedApplicationStatus = [
-    studentBasicInfo,
-    materialCollectionStatus,
-    statusSummary,
-  ]
-    .filter(Boolean)
-    .join("\n");
-
-  return {
-    studentBasicInfo,
-    materialCollectionStatus,
-    recognizedApplicationStatus,
-  };
-}
-
-async function recognizeImageText(file: File) {
-  if (
-    typeof fetch === "undefined" ||
-    typeof navigator === "undefined" ||
-    navigator.userAgent.toLowerCase().includes("jsdom") ||
-    !file.type.startsWith("image/")
-  ) {
-    return "";
+  if (currentIndex < 0) {
+    const lastCompletedIndex = timeline.reduce((result, item, index) => {
+      const escapedLabel = escapeRegExp(item.label);
+      return new RegExp(`${escapedLabel}.{0,12}(?:已完成|完成)`, "i").test(
+        normalizedText,
+      )
+        ? index
+        : result;
+    }, -1);
+    if (lastCompletedIndex >= 0 && lastCompletedIndex < timeline.length - 1) {
+      currentIndex = lastCompletedIndex + 1;
+    }
   }
 
-  const formData = new FormData();
-  formData.append("file", file);
+  if (currentIndex < 0) return timeline;
+  return timeline.map((item, index) => ({
+    ...item,
+    status:
+      index < currentIndex
+        ? ("completed" as const)
+        : index === currentIndex
+          ? ("current" as const)
+          : ("pending" as const),
+  }));
+}
+
+function schoolApplicationTableFromLegacyPdf(
+  report: LegacyPdfExtraction,
+  studentName: string,
+) {
+  return mergeSchoolApplicationTables(
+    report.schoolApplicationTables
+      .map((rows) =>
+        schoolApplicationTableFromRows(rows, studentName, {
+          preserveSourceHeaders: true,
+        }),
+      )
+      .filter((table): table is SchoolApplicationTable => Boolean(table)),
+  );
+}
+
+function serializePreviousReportState(state: PreviousReportStateV1) {
+  return `${previousReportStatePrefix}${JSON.stringify(state)}`;
+}
+
+function parsePreviousReportState(value: string | undefined | null) {
+  if (!value?.trim()) return null;
+  const source = value.startsWith(previousReportStatePrefix)
+    ? value.slice(previousReportStatePrefix.length)
+    : value.trim();
 
   try {
-    const response = await fetch("/api/monthly-reports/ocr", {
-      method: "POST",
-      body: formData,
-    });
-    if (!response.ok) return "";
-    const payload = (await response.json()) as { text?: string };
-    return payload.text ?? "";
+    const parsed = JSON.parse(source) as Partial<PreviousReportStateV1>;
+    if (
+      parsed.version !== 1 ||
+      !APPLICATION_TYPE_OPTIONS.includes(
+        parsed.applicationType as MonthlyReportApplicationType,
+      ) ||
+      !parsed.content ||
+      !Array.isArray(parsed.timelineItems)
+    ) {
+      return null;
+    }
+    return parsed as PreviousReportStateV1;
   } catch {
-    return "";
+    return null;
   }
+}
+
+async function readEmbeddedPreviousReportState(file: File) {
+  const lowerName = file.name.toLowerCase();
+  if (file.type === "application/pdf" || lowerName.endsWith(".pdf")) {
+    let timeoutId: ReturnType<typeof setTimeout> | undefined;
+    try {
+      const pdfjs = await import("pdfjs-dist/legacy/build/pdf.mjs");
+      pdfjs.GlobalWorkerOptions.workerSrc = new URL(
+        "pdfjs-dist/build/pdf.worker.min.mjs",
+        import.meta.url,
+      ).toString();
+      const loadingTask = pdfjs.getDocument({
+        data: new Uint8Array(await file.arrayBuffer()),
+      });
+      const pdfDocument = await Promise.race([
+        loadingTask.promise,
+        new Promise<never>((_, reject) => {
+          timeoutId = setTimeout(
+            () => reject(new Error("PDF 元数据读取超时")),
+            15_000,
+          );
+        }),
+      ]);
+      try {
+        const metadata = await pdfDocument.getMetadata().catch(() => null);
+        const info = (metadata?.info ?? {}) as Record<string, unknown>;
+        return parsePreviousReportState(
+          typeof info.Subject === "string" ? info.Subject : "",
+        );
+      } finally {
+        await pdfDocument.destroy();
+      }
+    } catch {
+      return null;
+    } finally {
+      if (timeoutId) clearTimeout(timeoutId);
+    }
+  }
+
+  if (lowerName.endsWith(".json") || file.type === "application/json") {
+    try {
+      return parsePreviousReportState(await file.text());
+    } catch {
+      return null;
+    }
+  }
+
+  return null;
 }
 
 function escapeHtml(value: string) {
@@ -1378,6 +1774,31 @@ function dataUrlToBlob(dataUrl: string) {
     bytes[index] = binary.charCodeAt(index);
   }
   return new Blob([bytes], { type: mime });
+}
+
+async function loadBlobImage(blob: Blob) {
+  const sourceUrl = URL.createObjectURL(blob);
+  try {
+    const image = new Image();
+    await new Promise<void>((resolve, reject) => {
+      image.onload = () => resolve();
+      image.onerror = () => reject(new Error("报告图像解码失败。"));
+      image.src = sourceUrl;
+    });
+    return image;
+  } finally {
+    URL.revokeObjectURL(sourceUrl);
+  }
+}
+
+async function canvasToPngBytes(canvas: HTMLCanvasElement) {
+  const blob = await new Promise<Blob>((resolve, reject) => {
+    canvas.toBlob((value) => {
+      if (value) resolve(value);
+      else reject(new Error("报告分页图像生成失败。"));
+    }, "image/png");
+  });
+  return new Uint8Array(await blob.arrayBuffer());
 }
 
 function drawWrappedText(
@@ -1695,15 +2116,24 @@ export function MonthlyReportWorkspace() {
     materialCollectionStatus: content.materialCollectionStatus,
   });
   const [communicationText, setCommunicationText] = useState("");
-  const [screenshotRecognitionText, setScreenshotRecognitionText] = useState("");
   const [recognizedFields, setRecognizedFields] = useState<RecognizedField[]>([]);
   const [recognitionStatus, setRecognitionStatus] =
-    useState("等待上传沟通记录或申请截图。");
+    useState("等待粘贴沟通内容，或上传沟通记录、Excel、此前报告。");
   const [attachments, setAttachments] = useState<AttachmentItem[]>([]);
+  const [previewAttachmentId, setPreviewAttachmentId] = useState<string | null>(null);
+  const [schoolApplicationColumns, setSchoolApplicationColumns] = useState<
+    SchoolApplicationColumn[]
+  >(defaultSchoolApplicationColumns);
+  const [schoolApplications, setSchoolApplications] = useState<
+    SchoolApplicationRow[]
+  >([]);
   const [modules, setModules] = useState<ModuleVisibility>(defaultModules);
   const [reportModuleOrder, setReportModuleOrder] = useState<ReportModuleKey[]>(
     defaultReportModuleOrder,
   );
+  const [reportModuleWidths, setReportModuleWidths] = useState<
+    Record<ReportModuleKey, ReportModuleWidth>
+  >(defaultReportModuleWidths);
   const [highlightedModules, setHighlightedModules] = useState<
     Record<ReportModuleKey, boolean>
   >({
@@ -1712,12 +2142,15 @@ export function MonthlyReportWorkspace() {
     timeline: false,
     basicInfo: false,
     materialCollection: false,
+    schoolApplications: false,
     completedThisMonth: false,
     nextMonthPlan: false,
     clientTasks: false,
     attachments: false,
   });
   const [draggedModule, setDraggedModule] = useState<ReportModuleKey | null>(null);
+  const [draggedTimelineItem, setDraggedTimelineItem] = useState<string | null>(null);
+  const [isPreviewExpanded, setIsPreviewExpanded] = useState(false);
   const [exportFormats, setExportFormats] = useState<Record<ExportFormat, boolean>>({
     PDF: true,
     PNG: false,
@@ -1733,6 +2166,9 @@ export function MonthlyReportWorkspace() {
   const config = useMemo(
     () => getMonthlyReportApplicationConfig(applicationType),
     [applicationType],
+  );
+  const previewAttachment = attachments.find(
+    (attachment) => attachment.id === previewAttachmentId,
   );
 
   const previewStyle = {
@@ -1754,6 +2190,17 @@ export function MonthlyReportWorkspace() {
   }, []);
 
   useEffect(() => {
+    if (!isPreviewExpanded && !previewAttachmentId) return;
+    const handleEscape = (event: KeyboardEvent) => {
+      if (event.key !== "Escape") return;
+      setIsPreviewExpanded(false);
+      setPreviewAttachmentId(null);
+    };
+    window.addEventListener("keydown", handleEscape);
+    return () => window.removeEventListener("keydown", handleEscape);
+  }, [isPreviewExpanded, previewAttachmentId]);
+
+  useEffect(() => {
     const reportNode = exportReportRef.current;
     if (
       !shouldRenderExportTarget ||
@@ -1764,11 +2211,18 @@ export function MonthlyReportWorkspace() {
     }
 
     const updatePageCount = () => {
+      const pdfLayout = getReportPdfLayout();
+      const continuationPageHeight = pdfLayout
+        ? reportPagePixelHeight -
+          pdfLayout.continuationContentTop -
+          pdfLayout.bottomMargin
+        : reportPagePixelHeight;
       setReportPageCount(
         buildReportPageSlices(
           reportNode.scrollHeight,
           reportPagePixelHeight,
-          getReportPdfBreakPositions(),
+          pdfLayout?.breakPositions ?? [],
+          continuationPageHeight,
         ).length,
       );
     };
@@ -1925,9 +2379,15 @@ export function MonthlyReportWorkspace() {
       setTextFormatting(buildDefaultTextFormatting(nextConfig.theme.textColor));
       setTextFormattingRanges(buildDefaultTextFormattingRanges());
       setCommunicationText("");
-      setScreenshotRecognitionText("");
       setRecognizedFields([]);
-      setRecognitionStatus("等待上传沟通记录或申请截图。");
+      setSchoolApplicationColumns(defaultSchoolApplicationColumns);
+      setSchoolApplications([]);
+      setModules(defaultModules);
+      setReportModuleOrder(defaultReportModuleOrder);
+      setReportModuleWidths(defaultReportModuleWidths);
+      setRecognitionStatus(
+        "等待粘贴沟通内容，或上传沟通记录、Excel、此前报告。",
+      );
       setIsDirty(false);
     } else {
       setContent((current) => ({
@@ -1965,7 +2425,6 @@ export function MonthlyReportWorkspace() {
     const extracted = extractFeedbackFromCommunication(communicationText, content);
     const parsedFields = parseAllRecognizedFields(
       [
-        screenshotRecognitionText,
         content.recognizedApplicationStatus,
         content.studentBasicInfo,
         content.materialCollectionStatus,
@@ -2002,7 +2461,7 @@ export function MonthlyReportWorkspace() {
     setRecognitionStatus(
       recognizedSections.length > 0
         ? `已生成：${recognizedSections.join("、")}。`
-        : "未识别到可自动填充的结构化字段，请检查截图清晰度，或在下方识别结果中手动补充。",
+        : "未识别到可自动填充的结构化字段，请检查沟通内容或 Excel 表头，并在下方手动补充。",
     );
     setIsDirty(true);
   }
@@ -2088,14 +2547,111 @@ export function MonthlyReportWorkspace() {
     setIsDirty(true);
   }
 
+  function moveTimelineItemTo(sourceId: string, targetId: string) {
+    if (sourceId === targetId) return;
+    setTimelineItems((current) => {
+      const sourceIndex = current.findIndex((item) => item.id === sourceId);
+      const targetIndex = current.findIndex((item) => item.id === targetId);
+      if (sourceIndex < 0 || targetIndex < 0) return current;
+      const next = [...current];
+      const [item] = next.splice(sourceIndex, 1);
+      next.splice(targetIndex, 0, item);
+      return next;
+    });
+    setDraggedTimelineItem(null);
+    setIsDirty(true);
+  }
+
+  function addSchoolApplicationRow() {
+    setSchoolApplications((current) => [
+      ...current,
+      {
+        id: `school-row-custom-${Date.now()}`,
+        values: Object.fromEntries(
+          schoolApplicationColumns.map((column) => [column.id, ""]),
+        ),
+      },
+    ]);
+    setModules((current) => ({ ...current, schoolApplications: true }));
+    setIsDirty(true);
+  }
+
+  function updateSchoolApplicationCell(
+    rowId: string,
+    columnId: string,
+    value: string,
+  ) {
+    setSchoolApplications((current) =>
+      current.map((row) =>
+        row.id === rowId
+          ? { ...row, values: { ...row.values, [columnId]: value } }
+          : row,
+      ),
+    );
+    setIsDirty(true);
+  }
+
+  function removeSchoolApplicationRow(rowId: string) {
+    setSchoolApplications((current) => current.filter((row) => row.id !== rowId));
+    setIsDirty(true);
+  }
+
+  function addSchoolApplicationColumn() {
+    const id = `school-column-custom-${Date.now()}`;
+    setSchoolApplicationColumns((current) => [
+      ...current,
+      { id, label: "新增字段" },
+    ]);
+    setSchoolApplications((current) =>
+      current.map((row) => ({
+        ...row,
+        values: { ...row.values, [id]: "" },
+      })),
+    );
+    setIsDirty(true);
+  }
+
+  function updateSchoolApplicationColumn(columnId: string, label: string) {
+    setSchoolApplicationColumns((current) =>
+      current.map((column) =>
+        column.id === columnId ? { ...column, label } : column,
+      ),
+    );
+    setIsDirty(true);
+  }
+
+  function removeSchoolApplicationColumn(columnId: string) {
+    if (schoolApplicationColumns.length <= 1) return;
+    setSchoolApplicationColumns((current) =>
+      current.filter((column) => column.id !== columnId),
+    );
+    setSchoolApplications((current) =>
+      current.map((row) => {
+        const values = { ...row.values };
+        delete values[columnId];
+        return { ...row, values };
+      }),
+    );
+    setIsDirty(true);
+  }
+
   function removeAttachment(id: string) {
     setAttachments((current) => {
+      const removedAttachment = current.find((attachment) => attachment.id === id);
+      if (
+        removedAttachment?.previewUrl &&
+        typeof URL !== "undefined" &&
+        typeof URL.revokeObjectURL === "function"
+      ) {
+        URL.revokeObjectURL(removedAttachment.previewUrl);
+      }
       const nextAttachments = current.filter((attachment) => attachment.id !== id);
       if (nextAttachments.length === 0) {
         setModules((currentModules) => ({ ...currentModules, attachments: false }));
       }
       return nextAttachments;
     });
+    if (previewAttachmentId === id) setPreviewAttachmentId(null);
     setIsDirty(true);
   }
 
@@ -2123,9 +2679,28 @@ export function MonthlyReportWorkspace() {
   }
 
   function handleAttachmentUpload(files: FileList | null) {
-    const nextAttachments = filesToAttachments(files);
-    setAttachments(nextAttachments);
-    setModules((current) => ({ ...current, attachments: nextAttachments.length > 0 }));
+    const uploadedFiles = Array.from(files ?? []);
+    const nextAttachments = filesToAttachments(uploadedFiles);
+    if (nextAttachments.length === 0) return;
+    setAttachments((current) => [...current, ...nextAttachments]);
+    setModules((current) => ({ ...current, attachments: true }));
+    uploadedFiles.forEach((file, index) => {
+      if (
+        nextAttachments[index]?.previewKind !== "text" ||
+        typeof file.text !== "function"
+      ) {
+        return;
+      }
+      void file.text().then((text) => {
+        setAttachments((current) =>
+          current.map((attachment) =>
+            attachment.id === nextAttachments[index].id
+              ? { ...attachment, textContent: text }
+              : attachment,
+          ),
+        );
+      });
+    });
     setIsDirty(true);
   }
 
@@ -2158,60 +2733,6 @@ export function MonthlyReportWorkspace() {
     reader.readAsText(file);
   }
 
-  async function handleApplicationScreenshotUpload(files: FileList | null) {
-    const uploadedFiles = Array.from(files ?? []);
-    if (uploadedFiles.length === 0) return;
-    setRecognitionStatus(
-      `正在识别申请截图：${uploadedFiles.map((file) => file.name).join("、")}...`,
-    );
-    const recognizedTexts: string[] = [];
-    const parsedFields: RecognizedField[] = [];
-
-    for (const file of uploadedFiles) {
-      let rawText = await recognizeImageText(file);
-      if (shouldReadUploadedFileAsText(file)) {
-        try {
-          rawText = [rawText, await file.text()].filter(Boolean).join("\n");
-        } catch {
-          rawText = rawText || "";
-        }
-      }
-      if (rawText) recognizedTexts.push(rawText);
-      const allFields = parseAllRecognizedFields(rawText);
-      if (allFields.length > 0) {
-        parsedFields.push(...allFields);
-        continue;
-      }
-      const parsedStatus = rawText
-        ? parseApplicationScreenshotContent(rawText, file.name)
-        : {
-            recognizedApplicationStatus: "",
-            studentBasicInfo: "",
-            materialCollectionStatus: "",
-          };
-      if (parsedStatus.recognizedApplicationStatus) {
-        parsedFields.push(...parseAllRecognizedFields(parsedStatus.recognizedApplicationStatus));
-      }
-    }
-
-    if (parsedFields.length === 0) {
-      setRecognitionStatus(
-        `已上传申请截图：${uploadedFiles.map((file) => file.name).join("、")}。未识别到“字段：内容”形式的信息，请检查截图清晰度，或手动补充识别结果。`,
-      );
-      setScreenshotRecognitionText(recognizedTexts.join("\n"));
-      setIsDirty(true);
-      return;
-    }
-
-    const nextFields = mergeRecognizedFields(recognizedFields, parsedFields);
-    applyRecognizedFields(nextFields);
-    setScreenshotRecognitionText(recognizedTexts.join("\n"));
-    setRecognitionStatus(
-      `已识别申请截图：${uploadedFiles.map((file) => file.name).join("、")}。已提取 ${parsedFields.length} 个字段，可在“识别字段筛选”中选择是否展示。`,
-    );
-    setIsDirty(true);
-  }
-
   async function handleSpreadsheetUpload(files: FileList | null) {
     const uploadedFiles = Array.from(files ?? []);
     if (uploadedFiles.length === 0) return;
@@ -2219,11 +2740,16 @@ export function MonthlyReportWorkspace() {
       `正在读取 Excel 表格：${uploadedFiles.map((file) => file.name).join("、")}...`,
     );
     const parsedFields: RecognizedField[] = [];
+    const parsedSchoolTables: SchoolApplicationTable[] = [];
 
     for (const file of uploadedFiles) {
       if (!isSpreadsheetFile(file)) continue;
       try {
-        parsedFields.push(...(await parseSpreadsheetFile(file, content.studentName)));
+        const parsed = await parseSpreadsheetFile(file, content.studentName);
+        parsedFields.push(...parsed.fields);
+        if (parsed.schoolApplicationTable) {
+          parsedSchoolTables.push(parsed.schoolApplicationTable);
+        }
       } catch {
         setRecognitionStatus(
           `读取 Excel 表格失败：${file.name}。请确认文件为 xlsx、xls 或 csv。`,
@@ -2233,7 +2759,8 @@ export function MonthlyReportWorkspace() {
       }
     }
 
-    if (parsedFields.length === 0) {
+    const schoolApplicationTable = mergeSchoolApplicationTables(parsedSchoolTables);
+    if (parsedFields.length === 0 && !schoolApplicationTable) {
       setRecognitionStatus(
         `已上传 Excel 表格：${uploadedFiles.map((file) => file.name).join("、")}。未读取到可填充字段，请检查表头或字段列。`,
       );
@@ -2241,17 +2768,24 @@ export function MonthlyReportWorkspace() {
       return;
     }
 
-    const nextFields = mergeRecognizedFields(recognizedFields, parsedFields);
-    applyRecognizedFields(nextFields);
-    const recognized = buildContentFromRecognizedFields(
-      nextFields.filter(isReportRecognizedField),
-    );
-    setContent((current) => ({
-      ...current,
-      completedThisMonth: recognized.applicationProgress || current.completedThisMonth,
-    }));
+    if (parsedFields.length > 0) {
+      const nextFields = mergeRecognizedFields(recognizedFields, parsedFields);
+      applyRecognizedFields(nextFields);
+      const recognized = buildContentFromRecognizedFields(
+        nextFields.filter(isReportRecognizedField),
+      );
+      setContent((current) => ({
+        ...current,
+        completedThisMonth: recognized.applicationProgress || current.completedThisMonth,
+      }));
+    }
+    if (schoolApplicationTable) {
+      setSchoolApplicationColumns(schoolApplicationTable.columns);
+      setSchoolApplications(schoolApplicationTable.rows);
+      setModules((current) => ({ ...current, schoolApplications: true }));
+    }
     setRecognitionStatus(
-      `已读取 Excel 表格：${uploadedFiles.map((file) => file.name).join("、")}。已提取 ${parsedFields.length} 个字段，可在“识别字段筛选”中选择是否展示。`,
+      `已读取 Excel 表格：${uploadedFiles.map((file) => file.name).join("、")}。已提取 ${parsedFields.length} 个字段${schoolApplicationTable ? `，并识别 ${schoolApplicationTable.rows.length} 条院校申请记录` : ""}。`,
     );
     setIsDirty(true);
   }
@@ -2261,27 +2795,117 @@ export function MonthlyReportWorkspace() {
     if (!file) return;
     setRecognitionStatus(`正在读取此前报告：${file.name}...`);
 
-    let rawText = "";
-    const ocrText = await recognizeImageText(file);
-    if (shouldReadUploadedFileAsText(file) || file.type === "application/pdf") {
-      try {
-        rawText = [ocrText, await file.text()].filter(Boolean).join("\n");
-      } catch {
-        rawText = ocrText;
-      }
-    } else {
-      rawText = ocrText;
-    }
+    const embeddedState = await readEmbeddedPreviousReportState(file);
+    if (embeddedState) {
+      const importedOrder = embeddedState.reportModuleOrder.filter((key) =>
+        defaultReportModuleOrder.includes(key),
+      );
+      const completeOrder = [
+        ...importedOrder,
+        ...defaultReportModuleOrder.filter((key) => !importedOrder.includes(key)),
+      ];
+      const importedFields = parseAllRecognizedFields(
+        [
+          embeddedState.content.studentBasicInfo,
+          embeddedState.content.materialCollectionStatus,
+          embeddedState.content.recognizedApplicationStatus,
+        ]
+          .filter(Boolean)
+          .join("\n"),
+      ).filter(isReportRecognizedField);
 
-    if (!rawText.trim()) {
+      setApplicationType(embeddedState.applicationType);
+      setContent((current) => ({
+        ...current,
+        ...embeddedState.content,
+        additionalRecognizedFields: "",
+      }));
+      setTimelineItems(embeddedState.timelineItems);
+      setTheme((current) => ({ ...current, ...embeddedState.theme }));
+      setModules((current) => ({ ...current, ...embeddedState.modules }));
+      setReportModuleOrder(completeOrder);
+      setReportModuleWidths({
+        ...defaultReportModuleWidths,
+        ...embeddedState.reportModuleWidths,
+      });
+      setHighlightedModules((current) => ({
+        ...current,
+        ...embeddedState.highlightedModules,
+      }));
+      setTextFormatting((current) => ({
+        ...current,
+        ...embeddedState.textFormatting,
+      }));
+      setTextFormattingRanges((current) => ({
+        ...current,
+        ...embeddedState.textFormattingRanges,
+      }));
+      setSchoolApplicationColumns(
+        embeddedState.schoolApplicationColumns?.length
+          ? embeddedState.schoolApplicationColumns
+          : defaultSchoolApplicationColumns,
+      );
+      setSchoolApplications(embeddedState.schoolApplications ?? []);
+      setRecognizedFields(importedFields);
       setRecognitionStatus(
-        `已上传此前报告：${file.name}。未读取到文本内容，请上传 txt、md、html 或清晰的报告截图。`,
+        `已读取此前报告：${file.name}。报告标题、已填内容、时间轴、院校申请和展示设置已回填。`,
       );
       setIsDirty(true);
       return;
     }
 
+    let rawText = "";
+    let legacyPdfReport: LegacyPdfExtraction | null = null;
+    const isPdfReport =
+      file.type === "application/pdf" || file.name.toLowerCase().endsWith(".pdf");
+    let legacyPdfError = "";
+
+    if (isPdfReport) {
+      try {
+        const { extractLegacyPdfReport } = await import(
+          "@/features/monthly-reports/legacy-pdf-runtime"
+        );
+        legacyPdfReport = await extractLegacyPdfReport(file, (message) =>
+          setRecognitionStatus(message),
+        );
+        rawText = legacyPdfReport.rawText;
+      } catch (error) {
+        legacyPdfError =
+          error instanceof Error ? error.message : "PDF 文字识别未完成";
+      }
+    } else if (shouldReadUploadedFileAsText(file)) {
+      try {
+        rawText = await file.text();
+      } catch {
+        rawText = "";
+      }
+    }
+
+    if (!rawText.trim()) {
+      setRecognitionStatus(
+        isPdfReport
+          ? `无法读取此前报告：${file.name}。旧版 PDF 文本层和图片识别均未取得可回填内容${legacyPdfError ? `（${legacyPdfError}）` : ""}。`
+          : `无法读取此前报告：${file.name}。请上传本版本导出的 PDF，或 txt、md、html、json 格式报告。`,
+      );
+      setIsDirty(true);
+      return;
+    }
+
+    const restoredApplicationTypeValue =
+      legacyPdfReport?.identity.applicationType ??
+      extractLabeledValue(rawText, ["申请类型"]);
+    const restoredApplicationType = APPLICATION_TYPE_OPTIONS.includes(
+      restoredApplicationTypeValue as MonthlyReportApplicationType,
+    )
+      ? (restoredApplicationTypeValue as MonthlyReportApplicationType)
+      : null;
     const previousContent = {
+      title:
+        legacyPdfReport?.identity.reportTitle ||
+        extractLabeledValue(rawText, ["报告标题", "本次报告标题"]),
+      departmentLabel:
+        legacyPdfReport?.identity.departmentLabel ||
+        extractLabeledValue(rawText, ["部门标签", "部门"]),
       studentBasicInfo:
         extractReportSection(rawText, "基础信息") ||
         extractReportSection(rawText, "学生基础信息"),
@@ -2289,14 +2913,22 @@ export function MonthlyReportWorkspace() {
         extractReportSection(rawText, "材料收集") ||
         extractReportSection(rawText, "材料收集情况"),
       additionalRecognizedFields: "",
-      recognizedApplicationStatus:
-        extractReportSection(rawText, "申请截图识别") ||
-        extractReportSection(rawText, "截图识别结果"),
+      recognizedApplicationStatus: "",
       completedThisMonth:
+        (legacyPdfReport
+          ? extractLegacyOcrSection(rawText, [
+              "阶段性反馈",
+              "本次阶段性进度",
+              "本月完成情况",
+            ])
+          : "") ||
         extractReportSection(rawText, "阶段性反馈") ||
         extractReportSection(rawText, "本次阶段性进度") ||
         extractReportSection(rawText, "本月完成情况"),
       nextMonthPlan:
+        (legacyPdfReport
+          ? extractLegacyOcrSection(rawText, ["下一阶段计划", "下月计划"])
+          : "") ||
         extractReportSection(rawText, "下一阶段计划") ||
         extractReportSection(rawText, "下月计划"),
       currentStageFocus:
@@ -2307,8 +2939,23 @@ export function MonthlyReportWorkspace() {
         extractReportSection(rawText, "下一阶段重点") ||
         extractReportSection(rawText, "当前阶段重点和下一步建议"),
       clientTasks:
+        (legacyPdfReport
+          ? extractLegacyOcrSection(rawText, [
+              "需要学生/家庭配合",
+              "学生/家庭待办",
+            ])
+          : "") ||
         extractReportSection(rawText, "学生/家庭待办") ||
         extractReportSection(rawText, "需要学生/家庭配合"),
+      studentName:
+        legacyPdfReport?.identity.studentName ||
+        extractLabeledValue(rawText, ["学生姓名"]),
+      season:
+        legacyPdfReport?.identity.season ||
+        extractLabeledValue(rawText, ["申请季度", "申请季"]),
+      reportDate:
+        legacyPdfReport?.identity.reportDate ||
+        extractLabeledValue(rawText, ["报告日期"]),
     };
     const fieldsFromReport = parseAllRecognizedFields(
       [
@@ -2316,6 +2963,7 @@ export function MonthlyReportWorkspace() {
         previousContent.materialCollectionStatus,
         previousContent.additionalRecognizedFields,
         previousContent.recognizedApplicationStatus,
+        legacyPdfReport?.recoveredFieldText,
       ]
         .filter(Boolean)
         .join("\n"),
@@ -2323,22 +2971,66 @@ export function MonthlyReportWorkspace() {
     const nextFields = mergeRecognizedFields(recognizedFields, fieldsFromReport);
     const reportFields = nextFields.filter(isReportRecognizedField);
     const recognized = buildContentFromRecognizedFields(reportFields);
+    const restoredSchoolApplicationTable = legacyPdfReport
+      ? schoolApplicationTableFromLegacyPdf(
+          legacyPdfReport,
+          previousContent.studentName,
+        )
+      : null;
+    const restoredTimeline = restoredApplicationType
+      ? buildTimelineFromLegacyReport(
+          restoredApplicationType,
+          rawText,
+          previousContent.currentStageFocus,
+        )
+      : null;
+    const inferredCurrentStage =
+      restoredTimeline?.find((item) => item.status === "current")?.label ?? "";
 
     setRecognizedFields(reportFields);
+    if (restoredApplicationType) {
+      const restoredConfig = getMonthlyReportApplicationConfig(restoredApplicationType);
+      setApplicationType(restoredApplicationType);
+      setTheme(restoredConfig.theme);
+      if (restoredTimeline) setTimelineItems(restoredTimeline);
+    }
+    if (restoredSchoolApplicationTable) {
+      setSchoolApplicationColumns(restoredSchoolApplicationTable.columns);
+      setSchoolApplications(restoredSchoolApplicationTable.rows);
+    }
+    setModules((current) => ({
+      ...current,
+      basicInfo: Boolean(previousContent.studentBasicInfo) || current.basicInfo,
+      materialCollection:
+        Boolean(previousContent.materialCollectionStatus) || current.materialCollection,
+      completedThisMonth:
+        Boolean(previousContent.completedThisMonth) || current.completedThisMonth,
+      nextMonthPlan: Boolean(previousContent.nextMonthPlan) || current.nextMonthPlan,
+      clientTasks: Boolean(previousContent.clientTasks) || current.clientTasks,
+      schoolApplications:
+        Boolean(restoredSchoolApplicationTable) || current.schoolApplications,
+    }));
     setContent((current) => ({
       ...current,
+      title: previousContent.title || current.title,
+      departmentLabel:
+        previousContent.departmentLabel ||
+        (restoredApplicationType
+          ? departmentLabelByApplicationType[restoredApplicationType]
+          : current.departmentLabel),
       completedThisMonth:
         previousContent.completedThisMonth || current.completedThisMonth,
       nextMonthPlan: previousContent.nextMonthPlan || current.nextMonthPlan,
-      currentStageFocus:
-        previousContent.currentStageFocus || current.currentStageFocus,
       nextStageFocus: previousContent.nextStageFocus || current.nextStageFocus,
       clientTasks: previousContent.clientTasks || current.clientTasks,
       recognizedApplicationStatus:
         recognized.recognizedApplicationStatus ||
         previousContent.recognizedApplicationStatus ||
         current.recognizedApplicationStatus,
-      studentName: recognized.studentName || current.studentName,
+      studentName:
+        previousContent.studentName || recognized.studentName || current.studentName,
+      season: previousContent.season || current.season,
+      reportDate: previousContent.reportDate || current.reportDate,
       studentBasicInfo:
         recognized.studentBasicInfo ||
         previousContent.studentBasicInfo ||
@@ -2349,15 +3041,39 @@ export function MonthlyReportWorkspace() {
         current.materialCollectionStatus,
       additionalRecognizedFields:
         "",
+      currentStageFocus:
+        previousContent.currentStageFocus ||
+        inferredCurrentStage ||
+        current.currentStageFocus,
     }));
     setRecognitionStatus(
-      `已读取此前报告：${file.name}。已回填可识别内容，并提取 ${fieldsFromReport.length} 个可筛选字段。`,
+      legacyPdfReport
+        ? `已读取旧版 PDF：${file.name}。通过${legacyPdfReport.usedOcr ? "文本层和本地 OCR" : "PDF 文本层"}回填内容，提取 ${fieldsFromReport.length} 个字段${restoredSchoolApplicationTable ? `和 ${restoredSchoolApplicationTable.rows.length} 条院校申请记录` : ""}。${legacyPdfReport.ocrWarning ? `图片页识别未完成（${legacyPdfReport.ocrWarning}），` : ""}请在导出前快速核对回填内容。`
+        : `已读取此前报告：${file.name}。已回填可识别内容，并提取 ${fieldsFromReport.length} 个可筛选字段。`,
     );
     setIsDirty(true);
   }
 
   function toggleModule(key: keyof ModuleVisibility) {
-    setModules((current) => ({ ...current, [key]: !current[key] }));
+    const nextModules = { ...modules, [key]: !modules[key] };
+    setModules(nextModules);
+    if (key === "basicInfo" || key === "materialCollection") {
+      if (nextModules.basicInfo && !nextModules.materialCollection) {
+        setReportModuleWidths((widths) => ({ ...widths, basicInfo: "wide" }));
+      } else if (!nextModules.basicInfo && nextModules.materialCollection) {
+        setReportModuleWidths((widths) => ({
+          ...widths,
+          materialCollection: "wide",
+        }));
+      } else if (nextModules.basicInfo && nextModules.materialCollection) {
+        setReportModuleWidths((widths) => ({
+          ...widths,
+          basicInfo: "compact",
+          materialCollection: "wide",
+        }));
+      }
+    }
+    setIsDirty(true);
   }
 
   function toggleHighlightModule(key: ReportModuleKey) {
@@ -2389,6 +3105,14 @@ export function MonthlyReportWorkspace() {
       next.splice(targetIndex, 0, item);
       return next;
     });
+    setIsDirty(true);
+  }
+
+  function toggleReportModuleWidth(key: ReportModuleKey) {
+    setReportModuleWidths((current) => ({
+      ...current,
+      [key]: current[key] === "compact" ? "wide" : "compact",
+    }));
     setIsDirty(true);
   }
 
@@ -2501,6 +3225,24 @@ export function MonthlyReportWorkspace() {
     });
   }
 
+  function buildPreviousReportState(): PreviousReportStateV1 {
+    return {
+      version: 1,
+      applicationType,
+      content,
+      timelineItems,
+      theme,
+      modules,
+      reportModuleOrder,
+      reportModuleWidths,
+      highlightedModules,
+      textFormatting,
+      textFormattingRanges,
+      schoolApplicationColumns,
+      schoolApplications,
+    };
+  }
+
   function buildReportHtml() {
     const timelineHtml = timelineItems
       .map(
@@ -2572,6 +3314,23 @@ export function MonthlyReportWorkspace() {
             })
             .join("")
         : `<tr><td>材料收集</td><td><span class="status-pill">${emptySectionPlaceholder}</span></td><td>${emptySectionPlaceholder}</td></tr>`;
+    const schoolApplicationHeaderHtml = schoolApplicationColumns
+      .map((column) => `<th>${escapeHtml(column.label)}</th>`)
+      .join("");
+    const schoolApplicationRowsHtml =
+      schoolApplications.length > 0
+        ? schoolApplications
+            .map(
+              (row) =>
+                `<tr>${schoolApplicationColumns
+                  .map(
+                    (column) =>
+                      `<td>${escapeHtml(row.values[column.id] || emptySectionPlaceholder)}</td>`,
+                  )
+                  .join("")}</tr>`,
+            )
+            .join("")
+        : `<tr><td colspan="${schoolApplicationColumns.length}">${emptySectionPlaceholder}</td></tr>`;
     const attachmentHtml = escapeHtml(attachmentNames);
     const sectionClass = (key: ReportModuleKey) =>
       highlightedModules[key] ? "section-card highlighted" : "section-card";
@@ -2591,6 +3350,9 @@ export function MonthlyReportWorkspace() {
       }
       if (key === "materialCollection") {
         return `<section class="${sectionClass(key)}" data-layout="${modules.basicInfo ? "half" : "full"}"><h2 class="section-title">材料收集</h2><table><thead><tr><th>材料项目</th><th>状态</th><th>备注</th></tr></thead><tbody>${materialRowsHtml}</tbody></table></section>`;
+      }
+      if (key === "schoolApplications") {
+        return `<section class="${sectionClass(key)}"><h2 class="section-title">院校申请</h2><table><thead><tr>${schoolApplicationHeaderHtml}</tr></thead><tbody>${schoolApplicationRowsHtml}</tbody></table></section>`;
       }
       if (key === "completedThisMonth") {
         return `<section class="${sectionClass(key)}"><h2 class="section-title">${escapeHtml(completedThisMonthTitle)}</h2><p style="${getTextFormattingCss("completedThisMonth")}">${content.completedThisMonth.trim() ? getStyledTextHtml("completedThisMonth", content.completedThisMonth) : escapeHtml(emptySectionPlaceholder)}</p></section>`;
@@ -3544,15 +4306,45 @@ ${renderedReportModules}
     });
   }
 
-  function getReportPdfBreakPositions() {
+  function getReportPdfLayout(): ReportPdfLayout | null {
     const reportNode = exportReportRef.current;
-    if (!reportNode) return [];
-    const reportTop = reportNode.getBoundingClientRect().top;
-    return Array.from(
-      reportNode.querySelectorAll<HTMLElement>("[data-pdf-break-before='true']"),
-    ).map((element) =>
-      Math.max(0, Math.round(element.getBoundingClientRect().top - reportTop)),
+    if (!reportNode) return null;
+    const reportRect = reportNode.getBoundingClientRect();
+    const runningHeader = reportNode.querySelector<HTMLElement>(
+      "[data-report-running-header='true']",
     );
+    const rail = reportNode.querySelector<HTMLElement>("[data-report-rail='true']");
+    const main = reportNode.querySelector<HTMLElement>("[data-report-main='true']");
+    if (!runningHeader || !rail || !main) return null;
+
+    const runningHeaderRect = runningHeader.getBoundingClientRect();
+    const railRect = rail.getBoundingClientRect();
+    const mainRect = main.getBoundingClientRect();
+    const repeatHeaderHeight = Math.max(
+      112,
+      Math.round(runningHeaderRect.bottom - reportRect.top + 20),
+    );
+    const continuationContentTop = repeatHeaderHeight + 22;
+    const bottomMargin = 56;
+    const breakPositions = Array.from(
+      reportNode.querySelectorAll<HTMLElement>(
+        "[data-report-placement='main'][data-report-module]",
+      ),
+    ).map((element) =>
+      Math.max(0, Math.round(element.getBoundingClientRect().top - reportRect.top)),
+    );
+
+    return {
+      breakPositions,
+      repeatHeaderHeight,
+      continuationContentTop,
+      bottomMargin,
+      railX: Math.round(railRect.left - reportRect.left),
+      railWidth: Math.round(railRect.width),
+      mainX: Math.round(mainRect.left - reportRect.left),
+      mainWidth: Math.round(mainRect.width),
+      reportWidth: Math.round(reportRect.width),
+    };
   }
 
   async function buildExportBlob(format: ExportFormat) {
@@ -3565,57 +4357,130 @@ ${renderedReportModules}
       return new Blob([buildReportHtml()], { type: "application/pdf" });
     }
 
-    const pdfBreakPositions = getReportPdfBreakPositions();
-    const { PDFDocument, rgb } = await import("pdf-lib");
+    const pdfLayout = getReportPdfLayout();
+    const { PDFDocument } = await import("pdf-lib");
     const pdf = await PDFDocument.create();
-    const pngBytes = new Uint8Array(await pngBlob.arrayBuffer());
-    const image = await pdf.embedPng(pngBytes);
+    pdf.setTitle(reportTitle);
+    pdf.setCreator("新东方申请阶段反馈报告生成工具");
+    pdf.setProducer("新东方申请阶段反馈报告生成工具");
+    pdf.setKeywords(["monthly-report", "recoverable-report-state-v1"]);
+    pdf.setSubject(serializePreviousReportState(buildPreviousReportState()));
+    const sourceImage = await loadBlobImage(pngBlob);
+    const sourceWidth = sourceImage.naturalWidth || sourceImage.width;
+    const sourceHeight = sourceImage.naturalHeight || sourceImage.height;
     const pageWidth = 595.28;
     const pageHeight = 841.89;
-    const scale = pageWidth / image.width;
-    const width = image.width * scale;
-    const height = image.height * scale;
+    const scale = pageWidth / sourceWidth;
     const sourcePageHeight = pageHeight / scale;
-    const pageSlices = buildReportPageSlices(
-      image.height,
-      sourcePageHeight,
-      pdfBreakPositions,
+    const coordinateScale = pdfLayout
+      ? sourceWidth / Math.max(1, pdfLayout.reportWidth)
+      : 1;
+    const repeatHeaderHeight =
+      (pdfLayout?.repeatHeaderHeight ?? 0) * coordinateScale;
+    const continuationContentTop =
+      (pdfLayout?.continuationContentTop ?? 0) * coordinateScale;
+    const bottomMargin = (pdfLayout?.bottomMargin ?? 0) * coordinateScale;
+    const continuationPageHeight = Math.max(
+      sourcePageHeight * 0.5,
+      sourcePageHeight - continuationContentTop - bottomMargin,
     );
-    const backgroundHex = theme.cardColor.replace("#", "");
-    const normalizedBackgroundHex =
-      backgroundHex.length === 3
-        ? backgroundHex
-            .split("")
-            .map((character) => `${character}${character}`)
-            .join("")
-        : backgroundHex.padEnd(6, "f").slice(0, 6);
-    const backgroundColor = rgb(
-      Number.parseInt(normalizedBackgroundHex.slice(0, 2), 16) / 255,
-      Number.parseInt(normalizedBackgroundHex.slice(2, 4), 16) / 255,
-      Number.parseInt(normalizedBackgroundHex.slice(4, 6), 16) / 255,
+    const pageSlices = buildReportPageSlices(
+      sourceHeight,
+      sourcePageHeight,
+      (pdfLayout?.breakPositions ?? []).map(
+        (position) => position * coordinateScale,
+      ),
+      continuationPageHeight,
     );
 
-    for (const slice of pageSlices) {
-      const page = pdf.addPage([pageWidth, pageHeight]);
-      page.drawImage(image, {
-        x: 0,
-        y: pageHeight - height + slice.start * scale,
-        width,
-        height,
-      });
-      const blankHeight = Math.max(
-        0,
-        pageHeight - (slice.end - slice.start) * scale,
-      );
-      if (blankHeight > 0.5) {
-        page.drawRectangle({
-          x: 0,
-          y: 0,
-          width: pageWidth,
-          height: blankHeight,
-          color: backgroundColor,
-        });
+    for (const [pageIndex, slice] of pageSlices.entries()) {
+      const pageCanvas = document.createElement("canvas");
+      pageCanvas.width = sourceWidth;
+      pageCanvas.height = Math.ceil(sourcePageHeight);
+      const pageContext = pageCanvas.getContext("2d");
+      if (!pageContext) throw new Error("报告分页画布初始化失败。");
+
+      pageContext.fillStyle = theme.cardColor;
+      pageContext.fillRect(0, 0, pageCanvas.width, pageCanvas.height);
+      const sliceHeight = Math.max(1, slice.end - slice.start);
+
+      if (pageIndex === 0 || !pdfLayout) {
+        pageContext.drawImage(
+          sourceImage,
+          0,
+          slice.start,
+          sourceWidth,
+          sliceHeight,
+          0,
+          0,
+          sourceWidth,
+          sliceHeight,
+        );
+      } else {
+        const headerHeight = Math.min(repeatHeaderHeight, sourceHeight);
+        pageContext.drawImage(
+          sourceImage,
+          0,
+          0,
+          sourceWidth,
+          headerHeight,
+          0,
+          0,
+          sourceWidth,
+          headerHeight,
+        );
+
+        const railX = pdfLayout.railX * coordinateScale;
+        const railWidth = pdfLayout.railWidth * coordinateScale;
+        const railHeight = Math.max(
+          0,
+          pageCanvas.height - continuationContentTop - bottomMargin,
+        );
+        pageContext.save();
+        pageContext.globalAlpha = 0.055;
+        pageContext.fillStyle = theme.timelineCompletedColor;
+        pageContext.beginPath();
+        pageContext.roundRect(
+          railX,
+          continuationContentTop,
+          railWidth,
+          railHeight,
+          12 * coordinateScale,
+        );
+        pageContext.fill();
+        pageContext.restore();
+
+        const mainX = pdfLayout.mainX * coordinateScale;
+        const mainWidth = Math.min(
+          pdfLayout.mainWidth * coordinateScale,
+          sourceWidth - mainX,
+        );
+        const availableContentHeight = Math.max(
+          1,
+          pageCanvas.height - continuationContentTop - bottomMargin,
+        );
+        const fitScale = Math.min(1, availableContentHeight / sliceHeight);
+        pageContext.drawImage(
+          sourceImage,
+          mainX,
+          slice.start,
+          mainWidth,
+          sliceHeight,
+          mainX,
+          continuationContentTop,
+          mainWidth * fitScale,
+          sliceHeight * fitScale,
+        );
       }
+
+      const pageImage = await pdf.embedPng(await canvasToPngBytes(pageCanvas));
+      const page = pdf.addPage([pageWidth, pageHeight]);
+      page.drawImage(pageImage, {
+        x: 0,
+        y: 0,
+        width: pageWidth,
+        height: pageHeight,
+      });
     }
     const pdfBytes = await pdf.save();
     const pdfBuffer = new ArrayBuffer(pdfBytes.byteLength);
@@ -3729,6 +4594,8 @@ ${renderedReportModules}
         <CalendarDays className={iconClass} aria-hidden />
       ) : key === "clientTasks" ? (
         <UsersRound className={iconClass} aria-hidden />
+      ) : key === "schoolApplications" ? (
+        <School className={iconClass} aria-hidden />
       ) : key === "attachments" ? (
         <Paperclip className={iconClass} aria-hidden />
       ) : null;
@@ -3762,11 +4629,12 @@ ${renderedReportModules}
     placement: "rail" | "main" | "full",
     includeTestIds: boolean,
     paired: boolean,
+    editableLayout: boolean,
   ) {
     if (!modules[key]) return null;
     if (key === "attachments" && !attachmentNames) return null;
 
-    const sectionClass =
+    const sectionClass = `group relative ${
       placement === "rail"
         ? highlightedModules[key]
           ? key === "timeline" && timelineItems.length > 15
@@ -3787,33 +4655,93 @@ ${renderedReportModules}
                   ? "border-b border-slate-200 py-8 text-[18px] leading-[1.45]"
                   : key === "nextMonthPlan"
                     ? "border-b border-dashed border-slate-300 py-7 text-[19px] leading-[1.55]"
-                    : "py-7 text-[19px] leading-[1.55]";
+                    : "py-7 text-[19px] leading-[1.55]"
+    }`;
     const testId = includeTestIds ? `report-section-${key}` : undefined;
     const reportSectionTestId =
       includeTestIds && placement !== "rail" ? "report-section" : undefined;
     const commonProps = {
       "data-highlighted": highlightedModules[key] ? "true" : "false",
       "data-layout": paired ? "half" : "full",
+      "data-width": reportModuleWidths[key],
+      "data-report-module": key,
+      "data-report-placement": placement,
       "data-pdf-break-before": placement === "rail" ? undefined : "true",
       "data-testid": testId,
       className: sectionClass,
+      draggable: editableLayout,
+      onDragEnd: editableLayout ? () => setDraggedModule(null) : undefined,
+      onDragOver: editableLayout
+        ? (event: DragEvent<HTMLElement>) => {
+            event.preventDefault();
+            event.dataTransfer.dropEffect = "move";
+          }
+        : undefined,
+      onDragStart: editableLayout
+        ? (event: DragEvent<HTMLElement>) => {
+            event.dataTransfer.effectAllowed = "move";
+            event.dataTransfer.setData("text/report-module", key);
+            setDraggedModule(key);
+          }
+        : undefined,
+      onDrop: editableLayout
+        ? (event: DragEvent<HTMLElement>) => {
+            event.preventDefault();
+            const source =
+              (event.dataTransfer.getData("text/report-module") as ReportModuleKey) ||
+              draggedModule;
+            if (source) moveReportModuleTo(source, key);
+            setDraggedModule(null);
+          }
+        : undefined,
       style: getFusionSectionStyle(key, placement),
     };
+    const widthTarget = reportModuleWidths[key] === "compact" ? "wide" : "compact";
+    const layoutControls = editableLayout ? (
+      <div className="absolute right-2 top-2 z-20 flex items-center gap-1 rounded-lg border border-slate-200 bg-white/95 p-1 shadow-sm print:hidden">
+        <span
+          aria-label={`拖动${reportModuleLabels[key]}`}
+          className="flex h-8 w-8 cursor-grab items-center justify-center rounded-md text-slate-500 active:cursor-grabbing"
+          title="拖动调整位置"
+        >
+          <GripVertical className="h-4 w-4" aria-hidden />
+        </span>
+        <button
+          aria-label={`将${reportModuleLabels[key]}设为${widthTarget === "compact" ? "紧凑" : "主要"}宽度`}
+          className="inline-flex h-8 w-8 items-center justify-center rounded-md border border-slate-200 text-slate-600 hover:bg-slate-50"
+          title={widthTarget === "compact" ? "切换为紧凑宽度" : "切换为主要宽度"}
+          type="button"
+          onClick={() => toggleReportModuleWidth(key)}
+        >
+          {widthTarget === "compact" ? (
+            <Minimize2 className="h-4 w-4" aria-hidden />
+          ) : (
+            <Maximize2 className="h-4 w-4" aria-hidden />
+          )}
+        </button>
+      </div>
+    ) : null;
 
     if (key === "stageFocus") {
+      const isCompact = placement === "rail";
       return (
         <section key={key} {...commonProps}>
+          {layoutControls}
           <div data-testid={reportSectionTestId}>
             {renderFusionSectionHeading(key, stageFocusTitle, placement)}
             <div
-              className="mt-6 grid min-h-[144px] grid-cols-[1fr_58px_1.35fr] overflow-hidden rounded-lg border border-l-[6px]"
+              className={`mt-6 grid overflow-hidden rounded-lg border border-l-[6px] ${
+                isCompact
+                  ? "grid-cols-1"
+                  : "min-h-[144px] grid-cols-[1fr_58px_1.35fr]"
+              }`}
               style={{
                 background: `linear-gradient(90deg, ${theme.primarySoftColor} 0%, #ffffff 52%, ${theme.secondarySoftColor} 100%)`,
                 borderColor: "#e5e7eb",
                 borderLeftColor: theme.timelineCompletedColor,
               }}
             >
-              <div className="p-6">
+              <div className={isCompact ? "p-4" : "p-6"}>
                 <p className="font-bold" style={{ color: theme.timelineCompletedColor }}>
                   {currentStageFocusTitle}
                 </p>
@@ -3821,14 +4749,14 @@ ${renderedReportModules}
                   {currentStageFocusDisplay}
                 </p>
               </div>
-              <div className="flex items-center justify-center">
+              <div className={isCompact ? "flex h-8 items-center justify-center" : "flex items-center justify-center"}>
                 <ArrowRight
-                  className="h-7 w-7"
+                  className={`h-7 w-7 ${isCompact ? "rotate-90" : ""}`}
                   style={{ color: theme.timelineCompletedColor }}
                   aria-hidden
                 />
               </div>
-              <div className="p-6">
+              <div className={isCompact ? "p-4" : "p-6"}>
                 <p className="font-bold" style={{ color: theme.accentColor }}>
                   {nextStageFocusTitle}
                 </p>
@@ -3841,11 +4769,13 @@ ${renderedReportModules}
     }
 
     if (key === "summary") {
+      const isCompact = placement === "rail";
       return (
         <section key={key} {...commonProps} aria-label={summaryTitle}>
+          {layoutControls}
           <div data-testid={reportSectionTestId}>
             {renderFusionSectionHeading(key, summaryTitle, placement)}
-            <div className="mt-6 grid grid-cols-3 gap-5">
+            <div className={`mt-6 grid gap-4 ${isCompact ? "grid-cols-1" : "grid-cols-3 gap-5"}`}>
               <div className="min-h-[154px] rounded-lg border border-slate-200 bg-white p-4">
                 <div className="flex items-center gap-3">
                   <span
@@ -3898,6 +4828,7 @@ ${renderedReportModules}
       const useDenseTimeline = timelineItems.length > 15;
       return (
         <section key={key} {...commonProps}>
+          {layoutControls}
           <div data-testid={reportSectionTestId}>
             {renderFusionSectionHeading(key, config.moduleTitles.timeline, placement)}
             <ol className={useDenseTimeline ? "mt-4" : "mt-5"}>
@@ -3916,7 +4847,6 @@ ${renderedReportModules}
                         : "relative grid min-h-10 grid-cols-[34px_minmax(0,1fr)_auto] items-start gap-2 pb-1.5"
                     }
                     data-testid={includeTestIds ? `timeline-node-${index}` : undefined}
-                    data-pdf-break-before="true"
                     key={item.id}
                   >
                     {index < timelineItems.length - 1 ? (
@@ -4001,6 +4931,7 @@ ${renderedReportModules}
           : [{ label: "基础信息", value: emptySectionPlaceholder }];
       return (
         <section key={key} {...commonProps}>
+          {layoutControls}
           <div data-testid={reportSectionTestId}>
             {renderFusionSectionHeading(key, "基础信息", placement)}
             <div
@@ -4015,7 +4946,6 @@ ${renderedReportModules}
                 return (
                   <div
                     className="grid grid-cols-[118px_minmax(0,1fr)] gap-3 border-b border-slate-100 py-2"
-                    data-pdf-break-before="true"
                     key={`${row.label}-${index}`}
                   >
                     <span style={{ color: theme.mutedTextColor }}>
@@ -4061,13 +4991,16 @@ ${renderedReportModules}
             ];
       return (
         <section key={key} {...commonProps}>
+          {layoutControls}
           <div data-testid={reportSectionTestId}>
             {renderFusionSectionHeading(key, "材料收集", placement)}
-            <div className="mt-4 grid grid-cols-[1.2fr_112px_1fr] gap-3 border-b border-slate-300 pb-2 font-semibold" style={{ color: theme.mutedTextColor }}>
-              <span>材料项目</span>
-              <span>状态</span>
-              <span>备注</span>
-            </div>
+            {placement === "rail" ? null : (
+              <div className="mt-4 grid grid-cols-[1.2fr_112px_1fr] gap-3 border-b border-slate-300 pb-2 font-semibold" style={{ color: theme.mutedTextColor }}>
+                <span>材料项目</span>
+                <span>状态</span>
+                <span>备注</span>
+              </div>
+            )}
             <div className="divide-y divide-slate-200">
               {rows.map((row, index) => {
                 const statusStyle = statusStyles[row.status];
@@ -4083,8 +5016,11 @@ ${renderedReportModules}
                   remarkStart >= 0 ? remarkStart + row.remark.length : -1;
                 return (
                   <div
-                    className="grid grid-cols-[1.2fr_112px_1fr] gap-3 py-2"
-                    data-pdf-break-before="true"
+                    className={
+                      placement === "rail"
+                        ? "grid grid-cols-[minmax(0,1fr)_auto] gap-2 py-3"
+                        : "grid grid-cols-[1.2fr_112px_1fr] gap-3 py-2"
+                    }
                     key={`${row.item}-${row.remark}-${index}`}
                   >
                     <span className="sr-only">{row.item}：{row.remark}</span>
@@ -4104,7 +5040,10 @@ ${renderedReportModules}
                     >
                       {row.statusLabel}
                     </span>
-                    <span className="break-words" style={getTextFormattingStyle("materialCollectionStatus")}>
+                    <span
+                      className={`break-words ${placement === "rail" ? "col-span-2 text-[15px]" : ""}`}
+                      style={getTextFormattingStyle("materialCollectionStatus")}
+                    >
                       {remarkStart >= 0
                         ? renderStyledText(
                             "materialCollectionStatus",
@@ -4123,9 +5062,99 @@ ${renderedReportModules}
       );
     }
 
+    if (key === "schoolApplications") {
+      return (
+        <section key={key} {...commonProps}>
+          {layoutControls}
+          <div data-testid={reportSectionTestId}>
+            {renderFusionSectionHeading(key, "院校申请", placement)}
+            {placement === "rail" ? (
+              <div className="mt-4 grid gap-3">
+                {schoolApplications.length > 0 ? (
+                  schoolApplications.map((row) => (
+                    <article
+                      className="rounded-lg border border-slate-200 bg-white p-3"
+                      key={row.id}
+                    >
+                      {schoolApplicationColumns.map((column) => (
+                        <p
+                          className="grid grid-cols-[112px_minmax(0,1fr)] gap-2 border-b border-slate-100 py-1.5 last:border-b-0"
+                          key={column.id}
+                        >
+                          <span className="text-[14px]" style={{ color: theme.mutedTextColor }}>
+                            {column.label}
+                          </span>
+                          <span className="break-words text-[15px]">
+                            {row.values[column.id] || emptySectionPlaceholder}
+                          </span>
+                        </p>
+                      ))}
+                    </article>
+                  ))
+                ) : (
+                  <p style={{ color: theme.mutedTextColor }}>{emptySectionPlaceholder}</p>
+                )}
+              </div>
+            ) : (
+              <div className="mt-4 overflow-hidden rounded-lg border border-slate-200">
+                <table
+                  className={`w-full table-fixed border-collapse text-left ${
+                    schoolApplicationColumns.length > 5
+                      ? "text-[13px]"
+                      : "text-[17px]"
+                  }`}
+                >
+                  <thead style={{ backgroundColor: theme.primarySoftColor }}>
+                    <tr>
+                      {schoolApplicationColumns.map((column) => (
+                        <th
+                          className="border-b border-slate-200 px-2 py-2 font-semibold"
+                          key={column.id}
+                          style={{ color: theme.titleColor }}
+                        >
+                          {column.label}
+                        </th>
+                      ))}
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {schoolApplications.length > 0 ? (
+                      schoolApplications.map((row) => (
+                        <tr key={row.id}>
+                          {schoolApplicationColumns.map((column) => (
+                            <td
+                              className="break-words border-b border-slate-100 px-2 py-2 align-top last:border-b-0"
+                              key={column.id}
+                            >
+                              {row.values[column.id] || emptySectionPlaceholder}
+                            </td>
+                          ))}
+                        </tr>
+                      ))
+                    ) : (
+                      <tr>
+                        <td
+                          className="px-3 py-3"
+                          colSpan={Math.max(1, schoolApplicationColumns.length)}
+                          style={{ color: theme.mutedTextColor }}
+                        >
+                          {emptySectionPlaceholder}
+                        </td>
+                      </tr>
+                    )}
+                  </tbody>
+                </table>
+              </div>
+            )}
+          </div>
+        </section>
+      );
+    }
+
     if (key === "completedThisMonth") {
       return (
         <section key={key} {...commonProps}>
+          {layoutControls}
           <div data-testid={reportSectionTestId}>
             {renderFusionSectionHeading(key, completedThisMonthTitle, placement)}
             <p className="mt-4" style={getTextFormattingStyle("completedThisMonth")}>
@@ -4133,7 +5162,6 @@ ${renderedReportModules}
                 completedThisMonthLineRanges.map((line) => (
                   <i
                     className="mb-1 block not-italic last:mb-0"
-                    data-pdf-break-before="true"
                     key={`${line.start}-${line.text}`}
                   >
                     {renderStyledText(
@@ -4156,12 +5184,13 @@ ${renderedReportModules}
     if (key === "nextMonthPlan") {
       return (
         <section key={key} {...commonProps}>
+          {layoutControls}
           <div data-testid={reportSectionTestId}>
             {renderFusionSectionHeading(key, nextMonthPlanTitle, placement)}
             <div className="mt-4 space-y-1" style={getTextFormattingStyle("nextMonthPlan")}>
               {nextMonthPlanLineRanges.length > 0 ? (
                 nextMonthPlanLineRanges.map((line) => (
-                  <p data-pdf-break-before="true" key={`${line.start}-${line.text}`}>
+                  <p key={`${line.start}-${line.text}`}>
                     {renderStyledText(
                       "nextMonthPlan",
                       content.nextMonthPlan,
@@ -4182,6 +5211,7 @@ ${renderedReportModules}
     if (key === "clientTasks") {
       return (
         <section key={key} {...commonProps}>
+          {layoutControls}
           <div data-testid={reportSectionTestId}>
             {renderFusionSectionHeading(key, clientTasksTitle, placement)}
             <p className="mt-4" style={getTextFormattingStyle("clientTasks")}>
@@ -4189,7 +5219,6 @@ ${renderedReportModules}
                 clientTasksLineRanges.map((line) => (
                   <i
                     className="mb-1 block not-italic last:mb-0"
-                    data-pdf-break-before="true"
                     key={`${line.start}-${line.text}`}
                   >
                     {renderStyledText(
@@ -4211,31 +5240,61 @@ ${renderedReportModules}
 
     return (
       <section key={key} {...commonProps}>
+        {layoutControls}
         <div data-testid={reportSectionTestId}>
           {renderFusionSectionHeading(key, "附件", placement)}
-          <p className="mt-4">本次报告附件：{attachmentNames}</p>
+          <p className="sr-only">本次报告附件：{attachmentNames}</p>
+          <div className={`mt-4 grid gap-3 ${placement === "rail" ? "grid-cols-1" : "grid-cols-2"}`}>
+            {attachments.map((attachment) => (
+              <article
+                className="overflow-hidden rounded-lg border border-slate-200 bg-white"
+                key={attachment.id}
+              >
+                {attachment.previewKind === "image" && attachment.previewUrl ? (
+                  <img
+                    alt={attachment.name}
+                    className="max-h-[360px] w-full object-contain"
+                    src={attachment.previewUrl}
+                  />
+                ) : attachment.previewKind === "text" ? (
+                  <pre className="max-h-[260px] overflow-hidden whitespace-pre-wrap break-words bg-slate-50 p-3 text-[15px] leading-6">
+                    {attachment.textContent || emptySectionPlaceholder}
+                  </pre>
+                ) : (
+                  <div className="flex min-h-24 items-center gap-3 bg-slate-50 p-4">
+                    <FileText className="h-9 w-9 shrink-0 text-slate-400" aria-hidden />
+                    <p className="min-w-0 break-all text-[16px]">
+                      {attachment.previewKind === "pdf"
+                        ? "PDF 内容可在附件预览中逐页查看"
+                        : "此格式可在附件预览中打开原文件"}
+                    </p>
+                  </div>
+                )}
+                <div className="border-t border-slate-200 px-3 py-2">
+                  <p className="break-all font-semibold">{attachment.name}</p>
+                  <p className="text-[14px]" style={{ color: theme.mutedTextColor }}>
+                    {formatFileSize(attachment.size)}
+                  </p>
+                </div>
+              </article>
+            ))}
+          </div>
         </div>
       </section>
     );
   }
 
-  function renderFusionReportDocument(exportTarget: boolean) {
-    const includeTestIds = !exportTarget;
+  function renderFusionReportDocument(
+    exportTarget: boolean,
+    includeTestIds = !exportTarget,
+  ) {
     const hasInformationPair = modules.basicInfo && modules.materialCollection;
-    const singleInformationModule: ReportModuleKey | null =
-      modules.basicInfo !== modules.materialCollection
-        ? modules.basicInfo
-          ? "basicInfo"
-          : "materialCollection"
-        : null;
-    const leftModuleKeys = reportModuleOrder.filter(
-      (key) => key === "timeline" || (hasInformationPair && key === "basicInfo"),
+    const editableLayout = !exportTarget;
+    const compactModuleKeys = reportModuleOrder.filter(
+      (key) => modules[key] && reportModuleWidths[key] === "compact",
     );
-    const rightModuleKeys = reportModuleOrder.filter(
-      (key) =>
-        key !== "timeline" &&
-        key !== "basicInfo" &&
-        key !== singleInformationModule,
+    const wideModuleKeys = reportModuleOrder.filter(
+      (key) => modules[key] && reportModuleWidths[key] === "wide",
     );
 
     return (
@@ -4249,8 +5308,11 @@ ${renderedReportModules}
           fontFamily: theme.fontFamily,
         }}
       >
-        <header className="px-[58px] pb-2.5 pt-[46px]">
-          <div className="flex items-start justify-between gap-8">
+        <header className="px-[58px] pb-2.5 pt-[46px]" data-report-header="true">
+          <div
+            className="flex items-start justify-between gap-8"
+            data-report-running-header="true"
+          >
             <div className="flex min-w-0 items-center gap-[45px]">
               <img
                 alt="新东方"
@@ -4293,6 +5355,7 @@ ${renderedReportModules}
         >
           <aside
             className="min-h-[1418px] rounded-xl p-6"
+            data-report-rail="true"
             style={{ backgroundColor: `${theme.timelineCompletedColor}0d` }}
           >
             <section>
@@ -4335,23 +5398,32 @@ ${renderedReportModules}
               </div>
             </section>
 
-            {leftModuleKeys.map((key) =>
-              renderFusionModule(key, "rail", includeTestIds, hasInformationPair),
+            {compactModuleKeys.map((key) =>
+              renderFusionModule(
+                key,
+                "rail",
+                includeTestIds,
+                hasInformationPair && ["basicInfo", "materialCollection"].includes(key),
+                editableLayout,
+              ),
             )}
           </aside>
 
-          <main className="grid min-w-0 content-start gap-0 pt-6">
-            {rightModuleKeys.map((key) =>
-              renderFusionModule(key, "main", includeTestIds, hasInformationPair),
+          <main
+            className="grid min-w-0 content-start gap-0 pt-6"
+            data-report-main="true"
+          >
+            {wideModuleKeys.map((key) =>
+              renderFusionModule(
+                key,
+                "main",
+                includeTestIds,
+                hasInformationPair && ["basicInfo", "materialCollection"].includes(key),
+                editableLayout,
+              ),
             )}
           </main>
         </div>
-
-        {singleInformationModule ? (
-          <div className="px-[56px] pb-[56px]">
-            {renderFusionModule(singleInformationModule, "full", includeTestIds, false)}
-          </div>
-        ) : null}
       </article>
     );
   }
@@ -4394,6 +5466,111 @@ ${renderedReportModules}
                 仅使用该类型主题配色
               </button>
             </div>
+          </section>
+        </div>
+      ) : null}
+
+      {isPreviewExpanded ? (
+        <div className="fixed inset-0 z-[60] bg-slate-950/70 p-3 sm:p-5">
+          <section
+            aria-label="放大报告预览"
+            aria-modal="true"
+            className="mx-auto flex h-full max-w-[1480px] flex-col overflow-hidden rounded-lg bg-slate-100 shadow-2xl"
+            role="dialog"
+          >
+            <div className="flex items-center justify-between border-b border-slate-200 bg-white px-4 py-3">
+              <h2 className="font-semibold text-slate-950">放大报告预览</h2>
+              <button
+                aria-label="关闭放大报告预览"
+                className="inline-flex h-9 w-9 items-center justify-center rounded-lg border border-slate-300 text-slate-600"
+                title="关闭"
+                type="button"
+                onClick={() => setIsPreviewExpanded(false)}
+              >
+                <X className="h-4 w-4" aria-hidden />
+              </button>
+            </div>
+            <div className="min-h-0 flex-1 overflow-auto p-4">
+              <div className="mx-auto w-[1240px] shadow-xl">
+                {renderFusionReportDocument(false, false)}
+              </div>
+            </div>
+          </section>
+        </div>
+      ) : null}
+
+      {previewAttachment ? (
+        <div className="fixed inset-0 z-[70] flex items-center justify-center bg-slate-950/70 p-4">
+          <section
+            aria-label={`附件预览 ${previewAttachment.name}`}
+            aria-modal="true"
+            className="flex max-h-[92vh] w-full max-w-5xl flex-col overflow-hidden rounded-lg bg-white shadow-2xl"
+            role="dialog"
+          >
+            <div className="flex items-center justify-between gap-4 border-b border-slate-200 px-4 py-3">
+              <div className="min-w-0">
+                <h2 className="truncate font-semibold text-slate-950">
+                  {previewAttachment.name}
+                </h2>
+                <p className="text-xs text-slate-500">
+                  {previewAttachment.type} · {formatFileSize(previewAttachment.size)}
+                </p>
+              </div>
+              <button
+                aria-label="关闭附件预览"
+                className="inline-flex h-9 w-9 shrink-0 items-center justify-center rounded-lg border border-slate-300 text-slate-600"
+                title="关闭"
+                type="button"
+                onClick={() => setPreviewAttachmentId(null)}
+              >
+                <X className="h-4 w-4" aria-hidden />
+              </button>
+            </div>
+            <div className="min-h-0 flex-1 overflow-auto bg-slate-100 p-4">
+              {previewAttachment.previewKind === "image" && previewAttachment.previewUrl ? (
+                <img
+                  alt={previewAttachment.name}
+                  className="mx-auto max-h-full max-w-full bg-white object-contain shadow-sm"
+                  src={previewAttachment.previewUrl}
+                />
+              ) : previewAttachment.previewKind === "pdf" && previewAttachment.previewUrl ? (
+                <object
+                  aria-label={`PDF 内容 ${previewAttachment.name}`}
+                  className="h-[76vh] w-full rounded-lg bg-white"
+                  data={previewAttachment.previewUrl}
+                  type="application/pdf"
+                >
+                  <p className="p-4 text-sm text-slate-600">
+                    当前浏览器无法内嵌显示此 PDF，请使用下方按钮打开原文件。
+                  </p>
+                </object>
+              ) : previewAttachment.previewKind === "text" ? (
+                <pre className="min-h-[320px] whitespace-pre-wrap break-words rounded-lg bg-white p-4 text-sm leading-6 text-slate-800">
+                  {previewAttachment.textContent || emptySectionPlaceholder}
+                </pre>
+              ) : (
+                <div className="grid min-h-[320px] place-items-center rounded-lg bg-white p-6 text-center">
+                  <div>
+                    <FileText className="mx-auto h-12 w-12 text-slate-400" aria-hidden />
+                    <p className="mt-3 font-medium text-slate-900">浏览器暂不支持直接预览此格式</p>
+                    <p className="mt-1 text-sm text-slate-500">可以打开原文件查看完整内容。</p>
+                  </div>
+                </div>
+              )}
+            </div>
+            {previewAttachment.previewUrl ? (
+              <div className="border-t border-slate-200 bg-white p-3 text-right">
+                <a
+                  className="inline-flex items-center gap-2 rounded-lg border border-slate-300 px-3 py-2 text-sm font-medium text-slate-700"
+                  href={previewAttachment.previewUrl}
+                  rel="noreferrer"
+                  target="_blank"
+                >
+                  <Eye className="h-4 w-4" aria-hidden />
+                  打开原文件
+                </a>
+              </div>
+            ) : null}
           </section>
         </div>
       ) : null}
@@ -4625,32 +5802,14 @@ ${renderedReportModules}
             </label>
 
             <label className="grid gap-2 rounded-lg border border-dashed border-slate-300 p-3 text-sm font-medium">
-              上传申请截图
-              <span className="flex items-center gap-2 text-slate-500">
-                <Upload className="h-4 w-4" aria-hidden />
-                备用入口：仅在图片 OCR 能读出文字时提取“字段：内容”
-              </span>
-              <input
-                aria-label="上传申请截图"
-                accept="image/*,.txt,.md"
-                className="text-sm"
-                multiple
-                type="file"
-                onChange={(event) =>
-                  void handleApplicationScreenshotUpload(event.target.files)
-                }
-              />
-            </label>
-
-            <label className="grid gap-2 rounded-lg border border-dashed border-slate-300 p-3 text-sm font-medium">
               上传此前报告
               <span className="flex items-center gap-2 text-slate-500">
                 <Upload className="h-4 w-4" aria-hidden />
-                读取此前反馈报告中的已填内容并回填到当前页面
+                新版 PDF 可完整回填；旧版 PDF 会通过文本层和本地 OCR 尽可能恢复，OCR 失败时会自动降级，也兼容 txt、md、html、json
               </span>
               <input
                 aria-label="上传此前报告"
-                accept=".txt,.md,.html,.htm,.pdf,image/*"
+                accept=".txt,.md,.html,.htm,.pdf,.json"
                 className="text-sm"
                 type="file"
                 onChange={(event) =>
@@ -4688,7 +5847,7 @@ ${renderedReportModules}
                 multiple
                 className="text-sm"
                 type="file"
-                onChange={(event) => handleAttachmentUpload(event.target.files)}
+                onChange={(event) => void handleAttachmentUpload(event.target.files)}
               />
             </label>
             <div className="mt-3 grid gap-2">
@@ -4704,14 +5863,26 @@ ${renderedReportModules}
                         {attachment.type} · {formatFileSize(attachment.size)}
                       </p>
                     </div>
-                    <button
-                      aria-label={`删除附件 ${attachment.name}`}
-                      className="inline-flex h-8 w-8 shrink-0 items-center justify-center rounded-lg border border-slate-300 text-slate-500"
-                      type="button"
-                      onClick={() => removeAttachment(attachment.id)}
-                    >
-                      <Trash2 className="h-4 w-4" aria-hidden />
-                    </button>
+                    <div className="flex shrink-0 items-center gap-1">
+                      <button
+                        aria-label={`预览附件 ${attachment.name}`}
+                        className="inline-flex h-8 w-8 items-center justify-center rounded-lg border border-slate-300 text-slate-500"
+                        title="预览附件"
+                        type="button"
+                        onClick={() => setPreviewAttachmentId(attachment.id)}
+                      >
+                        <Eye className="h-4 w-4" aria-hidden />
+                      </button>
+                      <button
+                        aria-label={`删除附件 ${attachment.name}`}
+                        className="inline-flex h-8 w-8 items-center justify-center rounded-lg border border-slate-300 text-slate-500"
+                        title="删除附件"
+                        type="button"
+                        onClick={() => removeAttachment(attachment.id)}
+                      >
+                        <Trash2 className="h-4 w-4" aria-hidden />
+                      </button>
+                    </div>
                   </div>
                 ))
               ) : (
@@ -4997,6 +6168,115 @@ ${renderedReportModules}
                   updateContent("materialCollectionStatus", value)
                 }
               />
+              <section className="grid gap-3 rounded-lg border border-slate-200 bg-slate-50 p-3 lg:col-span-2">
+                <div className="flex flex-wrap items-center justify-between gap-2">
+                  <div>
+                    <h3 className="text-sm font-semibold">院校申请</h3>
+                    <p className="mt-1 text-xs text-slate-500">
+                      Excel 中识别到申请院校表时会自动填入；表头和每个单元格均可修改。
+                    </p>
+                  </div>
+                  <div className="flex items-center gap-2">
+                    <button
+                      className="inline-flex h-9 items-center gap-1 rounded-lg border border-slate-300 bg-white px-3 text-sm font-medium"
+                      type="button"
+                      onClick={addSchoolApplicationColumn}
+                    >
+                      <Plus className="h-4 w-4" aria-hidden />
+                      新增字段
+                    </button>
+                    <button
+                      className="inline-flex h-9 items-center gap-1 rounded-lg border border-slate-300 bg-white px-3 text-sm font-medium"
+                      type="button"
+                      onClick={addSchoolApplicationRow}
+                    >
+                      <Plus className="h-4 w-4" aria-hidden />
+                      新增院校
+                    </button>
+                  </div>
+                </div>
+                <div className="overflow-x-auto rounded-lg border border-slate-200 bg-white">
+                  <div className="min-w-max p-2">
+                    <div
+                      className="grid items-end gap-2 border-b border-slate-200 pb-2"
+                      style={{
+                        gridTemplateColumns: `repeat(${schoolApplicationColumns.length}, minmax(180px, 1fr)) 42px`,
+                      }}
+                    >
+                      {schoolApplicationColumns.map((column, columnIndex) => (
+                        <label className="grid gap-1 text-xs font-medium" key={column.id}>
+                          表头 {columnIndex + 1}
+                          <span className="flex items-center gap-1">
+                            <input
+                              aria-label={`院校申请表头 ${columnIndex + 1}`}
+                              className="min-w-0 flex-1 rounded-md border border-blue-200 bg-blue-50 px-2 py-1.5 text-sm"
+                              value={column.label}
+                              onChange={(event) =>
+                                updateSchoolApplicationColumn(
+                                  column.id,
+                                  event.target.value,
+                                )
+                              }
+                            />
+                            <button
+                              aria-label={`删除院校申请表头 ${columnIndex + 1}`}
+                              className="inline-flex h-8 w-8 items-center justify-center rounded-md border border-slate-300 text-slate-500 disabled:opacity-40"
+                              disabled={schoolApplicationColumns.length <= 1}
+                              type="button"
+                              onClick={() => removeSchoolApplicationColumn(column.id)}
+                            >
+                              <Trash2 className="h-3.5 w-3.5" aria-hidden />
+                            </button>
+                          </span>
+                        </label>
+                      ))}
+                      <span aria-hidden />
+                    </div>
+                    <div className="grid gap-2 pt-2">
+                      {schoolApplications.length > 0 ? (
+                        schoolApplications.map((row, rowIndex) => (
+                          <div
+                            className="grid items-center gap-2"
+                            key={row.id}
+                            style={{
+                              gridTemplateColumns: `repeat(${schoolApplicationColumns.length}, minmax(180px, 1fr)) 42px`,
+                            }}
+                          >
+                            {schoolApplicationColumns.map((column, columnIndex) => (
+                              <input
+                                aria-label={`院校申请第${rowIndex + 1}行第${columnIndex + 1}列`}
+                                className="rounded-md border border-slate-300 px-2 py-1.5 text-sm"
+                                key={column.id}
+                                placeholder={column.label}
+                                value={row.values[column.id] ?? ""}
+                                onChange={(event) =>
+                                  updateSchoolApplicationCell(
+                                    row.id,
+                                    column.id,
+                                    event.target.value,
+                                  )
+                                }
+                              />
+                            ))}
+                            <button
+                              aria-label={`删除院校申请第 ${rowIndex + 1} 行`}
+                              className="inline-flex h-8 w-8 items-center justify-center rounded-md border border-slate-300 text-slate-500"
+                              type="button"
+                              onClick={() => removeSchoolApplicationRow(row.id)}
+                            >
+                              <Trash2 className="h-3.5 w-3.5" aria-hidden />
+                            </button>
+                          </div>
+                        ))
+                      ) : (
+                        <p className="px-1 py-2 text-sm text-slate-500">
+                          尚未识别院校申请记录，可上传 Excel 或手动新增院校。
+                        </p>
+                      )}
+                    </div>
+                  </div>
+                </div>
+              </section>
             </div>
           </section>
 
@@ -5015,9 +6295,25 @@ ${renderedReportModules}
             <div className="mt-3 grid gap-2">
               {timelineItems.map((item, index) => (
                 <div
-                  className="grid gap-2 rounded-lg border border-slate-200 p-3 md:grid-cols-[1fr_1fr_120px_auto_auto]"
+                  aria-label={`拖动时间点 ${index + 1}`}
+                  className="grid cursor-grab gap-2 rounded-lg border border-slate-200 p-3 active:cursor-grabbing md:grid-cols-[36px_1fr_1fr_120px_auto_auto]"
+                  draggable
                   key={item.id}
+                  onDragEnd={() => setDraggedTimelineItem(null)}
+                  onDragOver={(event) => event.preventDefault()}
+                  onDragStart={() => setDraggedTimelineItem(item.id)}
+                  onDrop={() => {
+                    if (draggedTimelineItem) {
+                      moveTimelineItemTo(draggedTimelineItem, item.id);
+                    }
+                  }}
                 >
+                  <span
+                    className="flex h-10 items-center justify-center self-end rounded-lg border border-slate-200 bg-slate-50 text-slate-400"
+                    title="拖动调整顺序"
+                  >
+                    <GripVertical className="h-4 w-4" aria-hidden />
+                  </span>
                   <label className="grid gap-1 text-sm font-medium">
                     时间点 {index + 1}
                     <input
@@ -5172,8 +6468,20 @@ ${renderedReportModules}
           data-testid="monthly-report-preview"
           style={previewStyle}
         >
-          <h2 className="sr-only">报告预览</h2>
-          <div className="overflow-auto rounded-lg bg-slate-100 p-2">
+          <div className="mb-3 flex items-center justify-between gap-3">
+            <h2 className="text-base font-semibold">报告预览</h2>
+            <button
+              aria-label="放大报告预览"
+              className="inline-flex h-9 items-center gap-2 rounded-lg border border-slate-300 bg-white px-3 text-sm font-medium text-slate-700"
+              title="放大查看"
+              type="button"
+              onClick={() => setIsPreviewExpanded(true)}
+            >
+              <Maximize2 className="h-4 w-4" aria-hidden />
+              放大查看
+            </button>
+          </div>
+          <div className="cursor-zoom-in overflow-auto rounded-lg bg-slate-100 p-2" onDoubleClick={() => setIsPreviewExpanded(true)}>
             <div className="mx-auto w-[1240px] origin-top-left [zoom:0.26] sm:[zoom:0.45] lg:[zoom:0.75] 2xl:[zoom:0.3]">
               {renderFusionReportDocument(false)}
             </div>
