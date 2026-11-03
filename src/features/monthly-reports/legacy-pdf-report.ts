@@ -423,13 +423,26 @@ function formatLegacyDate(value: string) {
   return `${digits.slice(0, 4)}-${digits.slice(4, 6)}-${digits.slice(6, 8)}`;
 }
 
+function isGenericReportFileNameCandidate(value: string) {
+  const normalized = value.normalize("NFKC").trim();
+  const compact = normalized.replace(/[\s_-]+/g, "");
+  return (
+    !normalized ||
+    /^(?:codex[-_ ]?clipboard|screen(?:shot)?|screenshot|截屏|截图|微信图片|image|img|photo)/i.test(
+      normalized,
+    ) ||
+    /^[0-9a-f-]{20,}$/i.test(compact) ||
+    /^(?:反馈报告|申请季|报告)$/i.test(normalized)
+  );
+}
+
 export function inferLegacyPdfIdentity(
   fileName: string,
   title: string,
   author: string,
   rawText: string,
 ): LegacyPdfIdentity {
-  const stem = fileName.replace(/\.pdf$/i, "").trim();
+  const stem = fileName.replace(/\.(?:pdf|png|jpe?g|webp|bmp)$/i, "").trim();
   const normalizedSource = normalizeLegacyReportText(
     [stem, title, rawText].filter(Boolean).join("\n"),
   );
@@ -442,17 +455,6 @@ export function inferLegacyPdfIdentity(
   );
   const studentNameFromFile =
     firstTypeIndex > 0 ? fileSegments.slice(0, firstTypeIndex).join("_") : fileSegments[0] ?? "";
-  const titleStudentMatch = title
-    .normalize("NFKC")
-    .match(/^\s*([^\s_]+?)(?=(?:美国|加拿大|综合评价|中外合办|20\d{2}))/);
-  const studentName =
-    studentNameFromFile && !/^(?:反馈报告|申请季|报告)$/i.test(studentNameFromFile)
-      ? studentNameFromFile
-      : titleStudentMatch?.[1]?.trim() ?? "";
-  const seasonMatch = normalizedSource.match(/20\d{2}\s*(?:秋|春|Fall|Spring)/i);
-  const dateMatch =
-    stem.match(/(?:^|_)((?:19|20)\d{6})(?:_|$)/) ??
-    normalizedSource.match(/报告日期\s*[:：]?\s*((?:19|20)\d{6})/);
   const reportTitleLine = normalizeLegacyReportText(rawText)
     .split(/\n/)
     .map((line) => line.trim())
@@ -462,6 +464,26 @@ export function inferLegacyPdfIdentity(
         line.length <= 40 &&
         !/报告日期/.test(line),
     );
+  const labeledStudentMatch = normalizeLegacyReportText(rawText).match(
+    /学生姓名\s*[:：]\s*([^\s，,。；;|]+)/,
+  );
+  const titleStudentMatch = (title || reportTitleLine || "")
+    .normalize("NFKC")
+    .match(
+      /^\s*([^\s_]+?)(?=(?:申请季|美国|加拿大|综合评价|中外合办|20\d{2}))/, 
+    );
+  const safeStudentNameFromFile = isGenericReportFileNameCandidate(studentNameFromFile)
+    ? ""
+    : studentNameFromFile;
+  const studentName =
+    labeledStudentMatch?.[1]?.trim() ||
+    safeStudentNameFromFile ||
+    titleStudentMatch?.[1]?.trim() ||
+    "";
+  const seasonMatch = normalizedSource.match(/20\d{2}\s*(?:秋|春|Fall|Spring)/i);
+  const dateMatch =
+    stem.match(/(?:^|_)((?:19|20)\d{6})(?:_|$)/) ??
+    normalizedSource.match(/报告日期\s*[:：]?\s*((?:19|20)\d{6})/);
   const reportTitle =
     reportTitleLine &&
     studentName &&

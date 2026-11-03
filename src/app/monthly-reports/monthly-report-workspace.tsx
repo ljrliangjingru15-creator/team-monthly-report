@@ -32,6 +32,7 @@ import {
 } from "lucide-react";
 import {
   type DragEvent,
+  type PointerEvent as ReactPointerEvent,
   useEffect,
   useMemo,
   useRef,
@@ -200,6 +201,10 @@ type ReportPdfLayout = {
   mainX: number;
   mainWidth: number;
   reportWidth: number;
+  schoolApplicationContentEnd: number;
+  schoolApplicationContentStart: number;
+  schoolApplicationRepeatHeight: number;
+  schoolApplicationRepeatStart: number;
 };
 
 type KeyValueRow = {
@@ -230,6 +235,8 @@ type PreviousReportStateV1 = {
   textFormattingRanges: TextFormattingRangeMap;
   schoolApplicationColumns: SchoolApplicationColumn[];
   schoolApplications: SchoolApplicationRow[];
+  schoolApplicationColumnWidths?: Record<string, number>;
+  schoolApplicationRowHeights?: Record<string, number>;
 };
 
 const initialApplicationType: MonthlyReportApplicationType = "美国本科新生";
@@ -1579,7 +1586,7 @@ function isReportHeadingMatch(line: string, heading: string) {
   const normalizedHeading = normalizeReportHeading(heading);
   if (normalizedLine === normalizedHeading) return true;
   return normalizedLine
-    .split("/")
+    .split(/\s+\/\s+/)
     .map((part) => part.trim())
     .some(
       (part) =>
@@ -2127,6 +2134,10 @@ export function MonthlyReportWorkspace() {
   const [schoolApplications, setSchoolApplications] = useState<
     SchoolApplicationRow[]
   >([]);
+  const [schoolApplicationColumnWidths, setSchoolApplicationColumnWidths] =
+    useState<Record<string, number>>({});
+  const [schoolApplicationRowHeights, setSchoolApplicationRowHeights] =
+    useState<Record<string, number>>({});
   const [modules, setModules] = useState<ModuleVisibility>(defaultModules);
   const [reportModuleOrder, setReportModuleOrder] = useState<ReportModuleKey[]>(
     defaultReportModuleOrder,
@@ -2215,7 +2226,8 @@ export function MonthlyReportWorkspace() {
       const continuationPageHeight = pdfLayout
         ? reportPagePixelHeight -
           pdfLayout.continuationContentTop -
-          pdfLayout.bottomMargin
+          pdfLayout.bottomMargin -
+          pdfLayout.schoolApplicationRepeatHeight
         : reportPagePixelHeight;
       setReportPageCount(
         buildReportPageSlices(
@@ -2593,6 +2605,11 @@ export function MonthlyReportWorkspace() {
 
   function removeSchoolApplicationRow(rowId: string) {
     setSchoolApplications((current) => current.filter((row) => row.id !== rowId));
+    setSchoolApplicationRowHeights((current) => {
+      const next = { ...current };
+      delete next[rowId];
+      return next;
+    });
     setIsDirty(true);
   }
 
@@ -2632,6 +2649,83 @@ export function MonthlyReportWorkspace() {
         return { ...row, values };
       }),
     );
+    setSchoolApplicationColumnWidths((current) => {
+      const next = { ...current };
+      delete next[columnId];
+      return next;
+    });
+    setIsDirty(true);
+  }
+
+  function beginSchoolApplicationColumnResize(
+    columnId: string,
+    event: ReactPointerEvent<HTMLElement>,
+  ) {
+    event.preventDefault();
+    event.stopPropagation();
+    const header = event.currentTarget.closest("th");
+    if (!(header instanceof HTMLElement)) return;
+    const renderedScale = header.getBoundingClientRect().width / header.offsetWidth || 1;
+    const startX = event.clientX;
+    const startWidth = schoolApplicationColumnWidths[columnId] ?? header.offsetWidth;
+
+    const handlePointerMove = (moveEvent: PointerEvent) => {
+      const nextWidth = Math.max(
+        64,
+        Math.min(360, startWidth + (moveEvent.clientX - startX) / renderedScale),
+      );
+      setSchoolApplicationColumnWidths((current) => ({
+        ...current,
+        [columnId]: Math.round(nextWidth),
+      }));
+    };
+    const stopResize = () => {
+      window.removeEventListener("pointermove", handlePointerMove);
+      window.removeEventListener("pointerup", stopResize);
+      window.removeEventListener("pointercancel", stopResize);
+      setIsDirty(true);
+    };
+    window.addEventListener("pointermove", handlePointerMove);
+    window.addEventListener("pointerup", stopResize, { once: true });
+    window.addEventListener("pointercancel", stopResize, { once: true });
+  }
+
+  function beginSchoolApplicationRowResize(
+    rowId: string,
+    event: ReactPointerEvent<HTMLElement>,
+  ) {
+    event.preventDefault();
+    event.stopPropagation();
+    const row = event.currentTarget.closest("tr");
+    if (!(row instanceof HTMLElement)) return;
+    const renderedScale = row.getBoundingClientRect().height / row.offsetHeight || 1;
+    const startY = event.clientY;
+    const startHeight = schoolApplicationRowHeights[rowId] ?? row.offsetHeight;
+
+    const handlePointerMove = (moveEvent: PointerEvent) => {
+      const nextHeight = Math.max(
+        38,
+        Math.min(280, startHeight + (moveEvent.clientY - startY) / renderedScale),
+      );
+      setSchoolApplicationRowHeights((current) => ({
+        ...current,
+        [rowId]: Math.round(nextHeight),
+      }));
+    };
+    const stopResize = () => {
+      window.removeEventListener("pointermove", handlePointerMove);
+      window.removeEventListener("pointerup", stopResize);
+      window.removeEventListener("pointercancel", stopResize);
+      setIsDirty(true);
+    };
+    window.addEventListener("pointermove", handlePointerMove);
+    window.addEventListener("pointerup", stopResize, { once: true });
+    window.addEventListener("pointercancel", stopResize, { once: true });
+  }
+
+  function resetSchoolApplicationTableSizing() {
+    setSchoolApplicationColumnWidths({});
+    setSchoolApplicationRowHeights({});
     setIsDirty(true);
   }
 
@@ -2782,6 +2876,8 @@ export function MonthlyReportWorkspace() {
     if (schoolApplicationTable) {
       setSchoolApplicationColumns(schoolApplicationTable.columns);
       setSchoolApplications(schoolApplicationTable.rows);
+      setSchoolApplicationColumnWidths({});
+      setSchoolApplicationRowHeights({});
       setModules((current) => ({ ...current, schoolApplications: true }));
     }
     setRecognitionStatus(
@@ -2846,6 +2942,12 @@ export function MonthlyReportWorkspace() {
           : defaultSchoolApplicationColumns,
       );
       setSchoolApplications(embeddedState.schoolApplications ?? []);
+      setSchoolApplicationColumnWidths(
+        embeddedState.schoolApplicationColumnWidths ?? {},
+      );
+      setSchoolApplicationRowHeights(
+        embeddedState.schoolApplicationRowHeights ?? {},
+      );
       setRecognizedFields(importedFields);
       setRecognitionStatus(
         `已读取此前报告：${file.name}。报告标题、已填内容、时间轴、院校申请和展示设置已回填。`,
@@ -2858,6 +2960,9 @@ export function MonthlyReportWorkspace() {
     let legacyPdfReport: LegacyPdfExtraction | null = null;
     const isPdfReport =
       file.type === "application/pdf" || file.name.toLowerCase().endsWith(".pdf");
+    const isImageReport =
+      file.type.startsWith("image/") ||
+      /\.(?:png|jpe?g|webp|bmp)$/i.test(file.name);
     let legacyPdfError = "";
 
     if (isPdfReport) {
@@ -2873,6 +2978,19 @@ export function MonthlyReportWorkspace() {
         legacyPdfError =
           error instanceof Error ? error.message : "PDF 文字识别未完成";
       }
+    } else if (isImageReport) {
+      try {
+        const { extractLegacyImageReport } = await import(
+          "@/features/monthly-reports/legacy-pdf-runtime"
+        );
+        legacyPdfReport = await extractLegacyImageReport(file, (message) =>
+          setRecognitionStatus(message),
+        );
+        rawText = legacyPdfReport.rawText;
+      } catch (error) {
+        legacyPdfError =
+          error instanceof Error ? error.message : "图片文字识别未完成";
+      }
     } else if (shouldReadUploadedFileAsText(file)) {
       try {
         rawText = await file.text();
@@ -2883,9 +3001,11 @@ export function MonthlyReportWorkspace() {
 
     if (!rawText.trim()) {
       setRecognitionStatus(
-        isPdfReport
-          ? `无法读取此前报告：${file.name}。旧版 PDF 文本层和图片识别均未取得可回填内容${legacyPdfError ? `（${legacyPdfError}）` : ""}。`
-          : `无法读取此前报告：${file.name}。请上传本版本导出的 PDF，或 txt、md、html、json 格式报告。`,
+        isImageReport
+          ? `无法读取此前报告图片：${file.name}。本地 OCR 未取得可回填文字${legacyPdfError ? `（${legacyPdfError}）` : ""}。`
+          : isPdfReport
+            ? `无法读取此前报告：${file.name}。旧版 PDF 文本层和图片识别均未取得可回填内容${legacyPdfError ? `（${legacyPdfError}）` : ""}。`
+          : `无法读取此前报告：${file.name}。请上传 PDF、报告图片，或 txt、md、html、json 格式报告。`,
       );
       setIsDirty(true);
       return;
@@ -2997,6 +3117,8 @@ export function MonthlyReportWorkspace() {
     if (restoredSchoolApplicationTable) {
       setSchoolApplicationColumns(restoredSchoolApplicationTable.columns);
       setSchoolApplications(restoredSchoolApplicationTable.rows);
+      setSchoolApplicationColumnWidths({});
+      setSchoolApplicationRowHeights({});
     }
     setModules((current) => ({
       ...current,
@@ -3048,7 +3170,7 @@ export function MonthlyReportWorkspace() {
     }));
     setRecognitionStatus(
       legacyPdfReport
-        ? `已读取旧版 PDF：${file.name}。通过${legacyPdfReport.usedOcr ? "文本层和本地 OCR" : "PDF 文本层"}回填内容，提取 ${fieldsFromReport.length} 个字段${restoredSchoolApplicationTable ? `和 ${restoredSchoolApplicationTable.rows.length} 条院校申请记录` : ""}。${legacyPdfReport.ocrWarning ? `图片页识别未完成（${legacyPdfReport.ocrWarning}），` : ""}请在导出前快速核对回填内容。`
+        ? `已读取${isImageReport ? "历史报告图片" : "旧版 PDF"}：${file.name}。通过${isImageReport ? "本地 OCR" : legacyPdfReport.usedOcr ? "文本层和本地 OCR" : "PDF 文本层"}回填内容，提取 ${fieldsFromReport.length} 个字段${restoredSchoolApplicationTable ? `和 ${restoredSchoolApplicationTable.rows.length} 条院校申请记录` : ""}。${legacyPdfReport.ocrWarning ? `图片页识别未完成（${legacyPdfReport.ocrWarning}），` : ""}请在导出前快速核对回填内容。`
         : `已读取此前报告：${file.name}。已回填可识别内容，并提取 ${fieldsFromReport.length} 个可筛选字段。`,
     );
     setIsDirty(true);
@@ -3240,6 +3362,8 @@ export function MonthlyReportWorkspace() {
       textFormattingRanges,
       schoolApplicationColumns,
       schoolApplications,
+      schoolApplicationColumnWidths,
+      schoolApplicationRowHeights,
     };
   }
 
@@ -4313,26 +4437,93 @@ ${renderedReportModules}
     const runningHeader = reportNode.querySelector<HTMLElement>(
       "[data-report-running-header='true']",
     );
+    const reportHeader = reportNode.querySelector<HTMLElement>(
+      "[data-report-header='true']",
+    );
     const rail = reportNode.querySelector<HTMLElement>("[data-report-rail='true']");
     const main = reportNode.querySelector<HTMLElement>("[data-report-main='true']");
-    if (!runningHeader || !rail || !main) return null;
+    if (!runningHeader || !reportHeader || !rail || !main) return null;
 
     const runningHeaderRect = runningHeader.getBoundingClientRect();
+    const reportHeaderRect = reportHeader.getBoundingClientRect();
     const railRect = rail.getBoundingClientRect();
     const mainRect = main.getBoundingClientRect();
+    const schoolApplicationSection = reportNode.querySelector<HTMLElement>(
+      "[data-report-placement='main'][data-report-module='schoolApplications']",
+    );
+    const schoolApplicationRows = schoolApplicationSection
+      ? Array.from(
+          schoolApplicationSection.querySelectorAll<HTMLElement>(
+            "[data-report-school-application-row='true']",
+          ),
+        )
+      : [];
+    const firstSchoolApplicationRow = schoolApplicationRows[0];
+    const lastSchoolApplicationRow = schoolApplicationRows.at(-1);
+    const schoolApplicationSectionRect =
+      schoolApplicationSection?.getBoundingClientRect();
+    const firstSchoolApplicationRowRect =
+      firstSchoolApplicationRow?.getBoundingClientRect();
+    const lastSchoolApplicationRowRect =
+      lastSchoolApplicationRow?.getBoundingClientRect();
     const repeatHeaderHeight = Math.max(
       112,
-      Math.round(runningHeaderRect.bottom - reportRect.top + 20),
+      Math.round(
+        Math.max(runningHeaderRect.bottom, reportHeaderRect.bottom) -
+          reportRect.top +
+          8,
+      ),
     );
-    const continuationContentTop = repeatHeaderHeight + 22;
+    const continuationContentTop = repeatHeaderHeight + 12;
     const bottomMargin = 56;
-    const breakPositions = Array.from(
+    const moduleBreakPositions = Array.from(
       reportNode.querySelectorAll<HTMLElement>(
         "[data-report-placement='main'][data-report-module]",
       ),
     ).map((element) =>
       Math.max(0, Math.round(element.getBoundingClientRect().top - reportRect.top)),
     );
+    const schoolApplicationRowBreakPositions = schoolApplicationRows.map(
+      (row) =>
+        Math.max(
+          0,
+          Math.round(row.getBoundingClientRect().top - reportRect.top),
+        ),
+    );
+    if (lastSchoolApplicationRowRect) {
+      schoolApplicationRowBreakPositions.push(
+        Math.max(
+          0,
+          Math.round(lastSchoolApplicationRowRect.bottom - reportRect.top),
+        ),
+      );
+    }
+    const breakPositions = [
+      ...moduleBreakPositions,
+      ...schoolApplicationRowBreakPositions,
+    ];
+    const schoolApplicationRepeatStart = schoolApplicationSectionRect
+      ? Math.max(
+          0,
+          Math.round(schoolApplicationSectionRect.top - reportRect.top),
+        )
+      : 0;
+    const schoolApplicationContentStart = firstSchoolApplicationRowRect
+      ? Math.max(
+          0,
+          Math.round(firstSchoolApplicationRowRect.top - reportRect.top),
+        )
+      : 0;
+    const schoolApplicationContentEnd = lastSchoolApplicationRowRect
+      ? Math.max(
+          0,
+          Math.round(lastSchoolApplicationRowRect.bottom - reportRect.top),
+        )
+      : 0;
+    const schoolApplicationRepeatHeight =
+      schoolApplicationContentStart > schoolApplicationRepeatStart
+        ? schoolApplicationContentStart - schoolApplicationRepeatStart
+        : 0;
 
     return {
       breakPositions,
@@ -4344,6 +4535,10 @@ ${renderedReportModules}
       mainX: Math.round(mainRect.left - reportRect.left),
       mainWidth: Math.round(mainRect.width),
       reportWidth: Math.round(reportRect.width),
+      schoolApplicationContentEnd,
+      schoolApplicationContentStart,
+      schoolApplicationRepeatHeight,
+      schoolApplicationRepeatStart,
     };
   }
 
@@ -4375,14 +4570,115 @@ ${renderedReportModules}
     const coordinateScale = pdfLayout
       ? sourceWidth / Math.max(1, pdfLayout.reportWidth)
       : 1;
+    const continuationLogo = await new Promise<HTMLImageElement | null>((resolve) => {
+      const logo = new Image();
+      logo.onload = () => resolve(logo);
+      logo.onerror = () => resolve(null);
+      logo.src = companyLogoSrc;
+    });
+    const drawContinuationHeader = (
+      context: CanvasRenderingContext2D,
+      headerHeight: number,
+    ) => {
+      const unit = coordinateScale;
+      context.save();
+      context.fillStyle = theme.cardColor;
+      context.fillRect(0, 0, sourceWidth, headerHeight);
+
+      if (continuationLogo) {
+        context.drawImage(
+          continuationLogo,
+          58 * unit,
+          46 * unit,
+          152 * unit,
+          52 * unit,
+        );
+      } else {
+        context.fillStyle = theme.timelineCompletedColor;
+        context.font = `bold ${34 * unit}px Arial, "PingFang SC", "Microsoft YaHei", sans-serif`;
+        context.fillText("新东方", 58 * unit, 86 * unit);
+      }
+
+      context.textBaseline = "alphabetic";
+      context.fillStyle = theme.textColor;
+      context.font = `${19 * unit}px Arial, "PingFang SC", "Microsoft YaHei", sans-serif`;
+      context.fillText(content.departmentLabel, 255 * unit, 79 * unit);
+
+      context.font = `bold ${16 * unit}px Arial, "PingFang SC", "Microsoft YaHei", sans-serif`;
+      const badges: Array<{ fill: string; color: string; text: string }> = [];
+      if (modules.season) {
+        badges.push({
+          fill: theme.secondarySoftColor,
+          color: theme.accentColor,
+          text: content.season,
+        });
+      }
+      if (modules.applicationType) {
+        badges.push({
+          fill: theme.primarySoftColor,
+          color: theme.primaryColor,
+          text: applicationType,
+        });
+      }
+      let badgeRight = sourceWidth - 58 * unit;
+      for (const badge of [...badges].reverse()) {
+        const badgeWidth = Math.max(
+          88 * unit,
+          context.measureText(badge.text).width + 40 * unit,
+        );
+        const badgeX = badgeRight - badgeWidth;
+        context.fillStyle = badge.fill;
+        context.beginPath();
+        context.roundRect(badgeX, 46 * unit, badgeWidth, 40 * unit, 20 * unit);
+        context.fill();
+        context.fillStyle = badge.color;
+        context.textAlign = "center";
+        context.fillText(badge.text, badgeX + badgeWidth / 2, 72 * unit);
+        badgeRight = badgeX - 12 * unit;
+      }
+
+      context.textAlign = "left";
+      context.fillStyle = theme.titleColor;
+      context.font = `bold ${40 * unit}px Arial, "PingFang SC", "Microsoft YaHei", sans-serif`;
+      drawWrappedText(
+        context,
+        reportTitle,
+        58 * unit,
+        181 * unit,
+        sourceWidth - 116 * unit,
+        47 * unit,
+      );
+
+      const metadata = [
+        modules.studentName ? `学生姓名：${content.studentName}` : "",
+        modules.season ? `申请季度：${content.season}` : "",
+        modules.applicationType ? `申请类型：${applicationType}` : "",
+        `报告日期：${reportDateDisplay}`,
+      ].filter(Boolean);
+      context.fillStyle = theme.textColor;
+      context.font = `${18 * unit}px Arial, "PingFang SC", "Microsoft YaHei", sans-serif`;
+      context.fillText(metadata.join("    "), 58 * unit, 236 * unit);
+      context.restore();
+    };
     const repeatHeaderHeight =
       (pdfLayout?.repeatHeaderHeight ?? 0) * coordinateScale;
     const continuationContentTop =
       (pdfLayout?.continuationContentTop ?? 0) * coordinateScale;
     const bottomMargin = (pdfLayout?.bottomMargin ?? 0) * coordinateScale;
+    const schoolApplicationRepeatHeight =
+      (pdfLayout?.schoolApplicationRepeatHeight ?? 0) * coordinateScale;
+    const schoolApplicationRepeatStart =
+      (pdfLayout?.schoolApplicationRepeatStart ?? 0) * coordinateScale;
+    const schoolApplicationContentStart =
+      (pdfLayout?.schoolApplicationContentStart ?? 0) * coordinateScale;
+    const schoolApplicationContentEnd =
+      (pdfLayout?.schoolApplicationContentEnd ?? 0) * coordinateScale;
     const continuationPageHeight = Math.max(
       sourcePageHeight * 0.5,
-      sourcePageHeight - continuationContentTop - bottomMargin,
+      sourcePageHeight -
+        continuationContentTop -
+        bottomMargin -
+        schoolApplicationRepeatHeight,
     );
     const pageSlices = buildReportPageSlices(
       sourceHeight,
@@ -4455,9 +4751,28 @@ ${renderedReportModules}
           pdfLayout.mainWidth * coordinateScale,
           sourceWidth - mainX,
         );
+        const startsInsideSchoolApplicationTable =
+          schoolApplicationRepeatHeight > 0 &&
+          slice.start >= schoolApplicationContentStart - 2 &&
+          slice.start < schoolApplicationContentEnd - 2;
+        let contentTop = continuationContentTop;
+        if (startsInsideSchoolApplicationTable) {
+          pageContext.drawImage(
+            sourceImage,
+            mainX,
+            schoolApplicationRepeatStart,
+            mainWidth,
+            schoolApplicationRepeatHeight,
+            mainX,
+            continuationContentTop,
+            mainWidth,
+            schoolApplicationRepeatHeight,
+          );
+          contentTop += schoolApplicationRepeatHeight;
+        }
         const availableContentHeight = Math.max(
           1,
-          pageCanvas.height - continuationContentTop - bottomMargin,
+          pageCanvas.height - contentTop - bottomMargin,
         );
         const fitScale = Math.min(1, availableContentHeight / sliceHeight);
         pageContext.drawImage(
@@ -4467,10 +4782,14 @@ ${renderedReportModules}
           mainWidth,
           sliceHeight,
           mainX,
-          continuationContentTop,
+          contentTop,
           mainWidth * fitScale,
           sliceHeight * fitScale,
         );
+
+        // Draw the full report header last so continuation pages always retain
+        // the logo, department, badges, report title and report metadata.
+        drawContinuationHeader(pageContext, headerHeight);
       }
 
       const pageImage = await pdf.embedPng(await canvasToPngBytes(pageCanvas));
@@ -5096,7 +5415,10 @@ ${renderedReportModules}
                 )}
               </div>
             ) : (
-              <div className="mt-4 overflow-hidden rounded-lg border border-slate-200">
+              <div
+                className="mt-4 overflow-hidden rounded-lg border border-slate-200"
+                data-report-school-application-table="true"
+              >
                 <table
                   className={`w-full table-fixed border-collapse text-left ${
                     schoolApplicationColumns.length > 5
@@ -5104,29 +5426,73 @@ ${renderedReportModules}
                       : "text-[17px]"
                   }`}
                 >
-                  <thead style={{ backgroundColor: theme.primarySoftColor }}>
+                  <colgroup>
+                    {schoolApplicationColumns.map((column) => (
+                      <col
+                        key={column.id}
+                        style={{
+                          width: `${schoolApplicationColumnWidths[column.id] ?? 100}px`,
+                        }}
+                      />
+                    ))}
+                  </colgroup>
+                  <thead
+                    data-report-school-application-header="true"
+                    style={{ backgroundColor: theme.primarySoftColor }}
+                  >
                     <tr>
-                      {schoolApplicationColumns.map((column) => (
+                      {schoolApplicationColumns.map((column, columnIndex) => (
                         <th
-                          className="border-b border-slate-200 px-2 py-2 font-semibold"
+                          className="relative border-b border-slate-200 px-2 py-2 font-semibold"
                           key={column.id}
                           style={{ color: theme.titleColor }}
                         >
                           {column.label}
+                          {editableLayout ? (
+                            <span
+                              aria-label={`调整院校申请第${columnIndex + 1}列列宽`}
+                              aria-orientation="vertical"
+                              className="absolute -right-1 top-0 z-20 h-full w-2 cursor-col-resize touch-none bg-transparent hover:bg-blue-300/50"
+                              draggable={false}
+                              role="separator"
+                              title="拖动调整列宽"
+                              onPointerDown={(event) =>
+                                beginSchoolApplicationColumnResize(column.id, event)
+                              }
+                            />
+                          ) : null}
                         </th>
                       ))}
                     </tr>
                   </thead>
                   <tbody>
                     {schoolApplications.length > 0 ? (
-                      schoolApplications.map((row) => (
-                        <tr key={row.id}>
-                          {schoolApplicationColumns.map((column) => (
+                      schoolApplications.map((row, rowIndex) => (
+                        <tr
+                          data-report-school-application-row="true"
+                          key={row.id}
+                          style={{ height: schoolApplicationRowHeights[row.id] }}
+                        >
+                          {schoolApplicationColumns.map((column, columnIndex) => (
                             <td
-                              className="break-words border-b border-slate-100 px-2 py-2 align-top last:border-b-0"
+                              className="relative break-words border-b border-slate-100 px-2 py-2 align-top last:border-b-0"
                               key={column.id}
                             >
                               {row.values[column.id] || emptySectionPlaceholder}
+                              {editableLayout &&
+                              columnIndex === schoolApplicationColumns.length - 1 ? (
+                                <span
+                                  aria-label={`调整院校申请第${rowIndex + 1}行行高`}
+                                  aria-orientation="horizontal"
+                                  className="absolute -bottom-1 left-0 z-20 h-2 w-full cursor-row-resize touch-none bg-transparent hover:bg-blue-300/50"
+                                  draggable={false}
+                                  role="separator"
+                                  title="拖动调整行高"
+                                  onPointerDown={(event) =>
+                                    beginSchoolApplicationRowResize(row.id, event)
+                                  }
+                                />
+                              ) : null}
                             </td>
                           ))}
                         </tr>
@@ -5805,11 +6171,11 @@ ${renderedReportModules}
               上传此前报告
               <span className="flex items-center gap-2 text-slate-500">
                 <Upload className="h-4 w-4" aria-hidden />
-                新版 PDF 可完整回填；旧版 PDF 会通过文本层和本地 OCR 尽可能恢复，OCR 失败时会自动降级，也兼容 txt、md、html、json
+                新版 PDF 可完整回填；旧版 PDF 和报告图片会通过本地 OCR 尽可能恢复，也兼容 txt、md、html、json
               </span>
               <input
                 aria-label="上传此前报告"
-                accept=".txt,.md,.html,.htm,.pdf,.json"
+                accept=".txt,.md,.html,.htm,.pdf,.json,.png,.jpg,.jpeg,.webp,.bmp,image/*"
                 className="text-sm"
                 type="file"
                 onChange={(event) =>
@@ -6173,10 +6539,18 @@ ${renderedReportModules}
                   <div>
                     <h3 className="text-sm font-semibold">院校申请</h3>
                     <p className="mt-1 text-xs text-slate-500">
-                      Excel 中识别到申请院校表时会自动填入；表头和每个单元格均可修改。
+                      Excel 中识别到申请院校表时会自动填入；表头和每个单元格均可修改，列宽和行高可在右侧报告预览中拖动调整。
                     </p>
                   </div>
-                  <div className="flex items-center gap-2">
+                  <div className="flex flex-wrap items-center gap-2">
+                    <button
+                      className="inline-flex h-9 items-center gap-1 rounded-lg border border-slate-300 bg-white px-3 text-sm font-medium"
+                      type="button"
+                      onClick={resetSchoolApplicationTableSizing}
+                    >
+                      <RotateCcw className="h-4 w-4" aria-hidden />
+                      恢复默认尺寸
+                    </button>
                     <button
                       className="inline-flex h-9 items-center gap-1 rounded-lg border border-slate-300 bg-white px-3 text-sm font-medium"
                       type="button"

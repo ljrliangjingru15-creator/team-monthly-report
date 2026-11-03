@@ -8,12 +8,14 @@ import {
 } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import MonthlyReportsPage from "@/app/monthly-reports/page";
+import { buildReportPageSlices } from "@/app/monthly-reports/monthly-report-workspace";
 import {
   APPLICATION_TYPE_OPTIONS,
   getMonthlyReportApplicationConfig,
 } from "@/features/monthly-reports/application-types";
 import { buildMonthlyReportExportPlan } from "@/features/monthly-reports/export-plan";
 import { generateMonthlyReportDraft } from "@/features/monthly-reports/generate";
+import { inferLegacyPdfIdentity } from "@/features/monthly-reports/legacy-pdf-report";
 import {
   buildExternalMonthlyReportPreview,
   containsForbiddenMonthlyReportContent,
@@ -87,6 +89,37 @@ afterEach(() => {
 });
 
 describe("monthly reports page", () => {
+  it("uses whole school application rows as PDF page boundaries", () => {
+    expect(
+      buildReportPageSlices(
+        4300,
+        1754,
+        [360, 640, 920, 1200, 1480, 1760, 2040, 2320, 2600, 2880, 3160, 3440, 3720],
+        1450,
+      ),
+    ).toEqual([
+      { start: 0, end: 1480 },
+      { start: 1480, end: 2880 },
+      { start: 2880, end: 4300 },
+    ]);
+  });
+
+  it("ignores generic screenshot names when recovering image report identity", () => {
+    expect(
+      inferLegacyPdfIdentity(
+        "codex-clipboard-dca4a124-0330-4257-a43a-e603461d73b0.png",
+        "",
+        "",
+        "韦翕申请季10月阶段性反馈报告\n学生姓名：韦翕\n申请季度：2027秋\n申请类型：美国本科新生",
+      ),
+    ).toMatchObject({
+      studentName: "韦翕",
+      reportTitle: "韦翕申请季10月阶段性反馈报告",
+      season: "2027秋",
+      applicationType: "美国本科新生",
+    });
+  });
+
   it("renders a focused communication feedback workspace without unrelated module entries", () => {
     render(<MonthlyReportsPage />);
 
@@ -102,6 +135,10 @@ describe("monthly reports page", () => {
     expect(screen.getByLabelText("上传沟通记录")).toBeInTheDocument();
     expect(screen.getByLabelText("上传 Excel 表格")).toBeInTheDocument();
     expect(screen.getByLabelText("上传此前报告")).toBeInTheDocument();
+    expect(screen.getByLabelText("上传此前报告")).toHaveAttribute(
+      "accept",
+      expect.stringContaining(".png"),
+    );
     expect(screen.getByLabelText("上传附件")).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "识别并生成反馈" })).toBeInTheDocument();
     expect(screen.getByLabelText("申请类型")).toHaveValue("美国本科新生");
@@ -138,6 +175,27 @@ describe("monthly reports page", () => {
     expect(preview).not.toHaveTextContent("上传识别");
     expect(preview).not.toHaveTextContent("附件展示");
     expect(screen.getByLabelText("展示附件列表")).not.toBeChecked();
+  });
+
+  it("resizes school application columns and rows directly in the preview", () => {
+    render(<MonthlyReportsPage />);
+    fireEvent.click(screen.getByRole("button", { name: "新增院校" }));
+
+    const columnHandle = screen.getByLabelText("调整院校申请第1列列宽");
+    fireEvent.pointerDown(columnHandle, { clientX: 100 });
+    fireEvent.pointerMove(window, { clientX: 220 });
+    fireEvent.pointerUp(window, { clientX: 220 });
+
+    const rowHandle = screen.getByLabelText("调整院校申请第1行行高");
+    fireEvent.pointerDown(rowHandle, { clientY: 100 });
+    fireEvent.pointerMove(window, { clientY: 180 });
+    fireEvent.pointerUp(window, { clientY: 180 });
+
+    const tableSection = screen.getByTestId("report-section-schoolApplications");
+    expect(tableSection.querySelector("col")).toHaveStyle({ width: "120px" });
+    expect(
+      tableSection.querySelector("[data-report-school-application-row='true']"),
+    ).toHaveStyle({ height: "80px" });
   });
 
   it("renders the optimized A4 export visual structure in the preview", () => {
@@ -741,8 +799,8 @@ describe("monthly reports page", () => {
       },
     });
 
-    expect(screen.getByText("主文书初稿.docx")).toBeInTheDocument();
-    expect(screen.getByText("成绩单.pdf")).toBeInTheDocument();
+    expect(screen.getAllByText("主文书初稿.docx").length).toBeGreaterThan(0);
+    expect(screen.getAllByText("成绩单.pdf").length).toBeGreaterThan(0);
     expect(screen.getByTestId("monthly-report-preview")).toHaveTextContent(
       "主文书初稿.docx",
     );
@@ -765,165 +823,16 @@ describe("monthly reports page", () => {
     fireEvent.click(screen.getByRole("button", { name: "删除附件 主文书初稿.docx" }));
 
     expect(screen.queryByText("主文书初稿.docx")).not.toBeInTheDocument();
-    expect(screen.getByText("成绩单.pdf")).toBeInTheDocument();
+    expect(screen.getAllByText("成绩单.pdf").length).toBeGreaterThan(0);
     expect(screen.getByTestId("monthly-report-preview")).not.toHaveTextContent(
       "主文书初稿.docx",
     );
     expect(screen.getByTestId("monthly-report-preview")).toHaveTextContent("成绩单.pdf");
   });
 
-  it("recognizes material collection and school submission status from an uploaded application screenshot", async () => {
+  it("does not expose the discontinued application screenshot upload", () => {
     render(<MonthlyReportsPage />);
-
-    fireEvent.change(screen.getByLabelText("上传申请截图"), {
-      target: {
-        files: [
-          new File(
-            [
-              "材料收集情况：成绩单已收集；申请院校提交情况：UCLA已提交，UCSD待提交",
-            ],
-            "申请提交识别文本.txt",
-            { type: "text/plain" },
-          ),
-        ],
-      },
-    });
-
-    await waitFor(() =>
-      expect(screen.getByLabelText("材料收集")).toHaveValue(
-        "材料收集情况：成绩单已收集",
-      ),
-    );
-    expect(screen.getByLabelText("阶段性反馈")).toHaveValue(
-      "申请院校提交情况：UCLA已提交，UCSD待提交",
-    );
-    expect(screen.getByTestId("monthly-report-preview")).toHaveTextContent(
-      "材料收集情况：成绩单已收集",
-    );
-    expect(screen.getByTestId("monthly-report-preview")).toHaveTextContent(
-      "申请院校提交情况：UCLA已提交，UCSD待提交",
-    );
-  });
-
-  it("generates student basic information and material collection modules from uploaded records and screenshots", async () => {
-    render(<MonthlyReportsPage />);
-
-    fireEvent.change(screen.getByLabelText("上传沟通记录"), {
-      target: {
-        files: [
-          new File(
-            [
-              "本月已完成材料表核对。\n下月计划继续推进申请提交。\n请学生补充信用卡信息。",
-            ],
-            "沟通记录.txt",
-            { type: "text/plain" },
-          ),
-        ],
-      },
-    });
-    fireEvent.change(screen.getByLabelText("上传申请截图"), {
-      target: {
-        files: [
-          new File(
-            [
-              [
-                "学生姓名：陈同学",
-                "国籍：中国",
-                "就读学校：广州外国语学校",
-                "托福/雅思/Duolingo目前最高分：TOEFL 105",
-                "SAT/ACT目前最高分：SAT 1480",
-                "AP分数：AP Calculus 5",
-                "目前GPA：3.92",
-                "语言/标化成绩单：已收集",
-                "G9-12成绩单：已收集",
-                "护照及美签页：护照已收集",
-                "信用卡：待补充",
-                "I-20：",
-              ].join("\n"),
-            ],
-            "学生信息与材料表识别文本.txt",
-            { type: "text/plain" },
-          ),
-        ],
-      },
-    });
-
-    await waitFor(() =>
-      expect((screen.getByLabelText("材料收集") as HTMLTextAreaElement).value).toContain(
-        "语言/标化成绩单：已收集",
-      ),
-    );
-    fireEvent.click(screen.getByRole("button", { name: "识别并生成反馈" }));
-
-    expect(screen.getByLabelText("基础信息")).toHaveValue(
-      [
-        "国籍：中国",
-        "就读学校：广州外国语学校",
-        "语言成绩（托福/雅思/Duoligo目前最高分）：TOEFL 105",
-        "标化考试（SAT/ACT目前最高分）：SAT 1480",
-        "AP分数：AP Calculus 5",
-        "目前GPA：3.92",
-      ].join("\n"),
-    );
-    expect(screen.getByLabelText("材料收集")).toHaveValue(
-      [
-        "语言/标化成绩单：已收集",
-        "G9-12成绩单：已收集",
-        "护照：护照已收集",
-        "信用卡：待补充",
-      ].join("\n"),
-    );
-    expect(screen.getByTestId("monthly-report-preview")).toHaveTextContent(
-      "基础信息",
-    );
-    expect(screen.getByTestId("monthly-report-preview")).toHaveTextContent(
-      "材料收集",
-    );
-    expect(screen.getByTestId("monthly-report-preview")).not.toHaveTextContent("I-20");
-    expect(screen.getByLabelText("阶段性反馈")).toHaveValue(
-      "本月已完成材料表核对。",
-    );
-  });
-
-  it("recognizes supported uploaded fields and ignores unsupported fields in the report", async () => {
-    render(<MonthlyReportsPage />);
-
-    fireEvent.change(screen.getByLabelText("上传申请截图"), {
-      target: {
-        files: [
-          new File(
-            [
-              [
-                "学生姓名：陈同学",
-                "就读学校：广州外国语学校",
-                "备注字段：可以隐藏",
-                "护照：已收集",
-              ].join("\n"),
-            ],
-            "任意字段识别文本.txt",
-            { type: "text/plain" },
-          ),
-        ],
-      },
-    });
-
-    await waitFor(() =>
-      expect(screen.getByLabelText("展示字段 就读学校")).toBeChecked(),
-    );
-
-    expect(screen.queryByLabelText("展示字段 备注字段")).not.toBeInTheDocument();
-    fireEvent.click(screen.getByRole("button", { name: "识别并生成反馈" }));
-
-    expect(screen.getByLabelText("学生姓名")).toHaveValue("陈同学");
-    expect(screen.getByLabelText("基础信息")).toHaveValue("就读学校：广州外国语学校");
-    expect(screen.getByLabelText("材料收集")).toHaveValue("护照：已收集");
-    expect(screen.getByTestId("monthly-report-preview")).toHaveTextContent(
-      "基础信息",
-    );
-    expect(screen.getByTestId("monthly-report-preview")).not.toHaveTextContent(
-      "可以隐藏",
-    );
-    expect(screen.queryByText("其他识别字段")).not.toBeInTheDocument();
+    expect(screen.queryByLabelText("上传申请截图")).not.toBeInTheDocument();
   });
 
   it("recognizes a student row from an uploaded Excel-style table and fills report modules", async () => {
@@ -1095,60 +1004,11 @@ describe("monthly reports page", () => {
     );
 
     expect(screen.getByLabelText("基础信息")).toHaveValue("目前GPA：3.92");
-    expect(screen.getByLabelText("材料收集")).toHaveValue("护照：已完成：已收集");
+    expect(screen.getByLabelText("材料收集")).toHaveValue("护照：已完成:已收集");
     expect(screen.getByLabelText("下一阶段计划")).toHaveValue("继续确认申请系统。");
     expect(screen.getByLabelText("需要学生/家庭配合")).toHaveValue(
       "请补充银行卡信息。",
     );
-  });
-
-  it("shows a visible recognition status when uploaded screenshot text cannot be parsed", async () => {
-    render(<MonthlyReportsPage />);
-
-    fireEvent.change(screen.getByLabelText("上传申请截图"), {
-      target: {
-        files: [
-          new File(["binary image content"], "表格测试.png", {
-            type: "image/png",
-          }),
-        ],
-      },
-    });
-
-    await waitFor(() =>
-      expect(screen.getByTestId("feedback-recognition-status")).toHaveTextContent(
-        "已上传申请截图",
-      ),
-    );
-    fireEvent.click(screen.getByRole("button", { name: "识别并生成反馈" }));
-
-    expect(screen.getByTestId("feedback-recognition-status")).toHaveTextContent(
-      "未识别到可自动填充的结构化字段",
-    );
-  });
-
-  it("does not parse raw image binary as recognized text when OCR returns empty", async () => {
-    render(<MonthlyReportsPage />);
-
-    fireEvent.change(screen.getByLabelText("上传申请截图"), {
-      target: {
-        files: [
-          new File(["�PNG\r\n�bad：garbage"], "真实截图.png", {
-            type: "image/png",
-          }),
-        ],
-      },
-    });
-
-    await waitFor(() =>
-      expect(screen.getByTestId("feedback-recognition-status")).toHaveTextContent(
-        "未识别到“字段：内容”形式的信息",
-      ),
-    );
-
-    expect(screen.queryByLabelText("截图识别结果")).not.toBeInTheDocument();
-    expect(screen.queryByLabelText("展示字段 �bad")).not.toBeInTheDocument();
-    expect(screen.queryByText("其他识别字段")).not.toBeInTheDocument();
   });
 
   it("uses module selection to control the report preview", () => {

@@ -17,6 +17,8 @@ type OcrWorker = {
 
 const OCR_SETUP_TIMEOUT_MS = 30_000;
 const OCR_PAGE_TIMEOUT_MS = 45_000;
+const OCR_IMAGE_MAX_PIXELS = 12_000_000;
+const OCR_IMAGE_TARGET_WIDTH = 1_800;
 
 function withTimeout<T>(promise: Promise<T>, timeoutMs: number, message: string) {
   let timeoutId: ReturnType<typeof setTimeout> | undefined;
@@ -63,6 +65,112 @@ async function createLocalOcrWorker(
   } catch (error) {
     timedOut = true;
     throw error;
+  }
+}
+
+function buildLegacyExtraction(
+  file: File,
+  extractedSourceText: string,
+  options: {
+    author?: string;
+    title?: string;
+    schoolApplicationTables?: string[][][];
+    usedOcr?: boolean;
+    ocrWarning?: string;
+  } = {},
+): LegacyPdfExtraction {
+  const extractedText = normalizeLegacyReportText(extractedSourceText);
+  const recoveredFieldText = recoverLegacyOcrFieldLines(extractedText);
+  const title = options.title ?? "";
+  const author = options.author ?? "";
+  const identity = inferLegacyPdfIdentity(
+    file.name,
+    title,
+    author,
+    extractedText,
+  );
+  const metadataLines = [
+    identity.studentName ? `学生姓名：${identity.studentName}` : "",
+    identity.season ? `申请季度：${identity.season}` : "",
+    identity.applicationType ? `申请类型：${identity.applicationType}` : "",
+    identity.reportDate ? `报告日期：${identity.reportDate}` : "",
+    identity.reportTitle ? `报告标题：${identity.reportTitle}` : "",
+    identity.departmentLabel ? `部门标签：${identity.departmentLabel}` : "",
+  ].filter(Boolean);
+
+  return {
+    rawText: normalizeLegacyReportText(
+      [...metadataLines, recoveredFieldText, extractedText]
+        .filter(Boolean)
+        .join("\n"),
+    ),
+    recoveredFieldText,
+    title,
+    author,
+    identity,
+    schoolApplicationTables: options.schoolApplicationTables ?? [],
+    usedOcr: options.usedOcr ?? false,
+    ocrWarning: options.ocrWarning ?? "",
+  };
+}
+
+async function loadImageFileToCanvas(file: File) {
+  const objectUrl = URL.createObjectURL(file);
+  try {
+    const image = new Image();
+    image.decoding = "async";
+    image.src = objectUrl;
+    await new Promise<void>((resolve, reject) => {
+      image.onload = () => resolve();
+      image.onerror = () => reject(new Error("无法读取图片内容"));
+    });
+
+    const sourceWidth = image.naturalWidth || image.width;
+    const sourceHeight = image.naturalHeight || image.height;
+    if (!sourceWidth || !sourceHeight) throw new Error("图片尺寸无效");
+
+    const clarityScale = Math.max(1, OCR_IMAGE_TARGET_WIDTH / sourceWidth);
+    const pixelLimitScale = Math.sqrt(
+      OCR_IMAGE_MAX_PIXELS / (sourceWidth * sourceHeight),
+    );
+    const scale = Math.min(2, clarityScale, pixelLimitScale);
+    const canvas = document.createElement("canvas");
+    canvas.width = Math.max(1, Math.round(sourceWidth * scale));
+    canvas.height = Math.max(1, Math.round(sourceHeight * scale));
+    const context = canvas.getContext("2d", { alpha: false });
+    if (!context) throw new Error("无法创建图片识别画布");
+    context.fillStyle = "#ffffff";
+    context.fillRect(0, 0, canvas.width, canvas.height);
+    context.imageSmoothingEnabled = true;
+    context.imageSmoothingQuality = "high";
+    context.drawImage(image, 0, 0, canvas.width, canvas.height);
+    return canvas;
+  } finally {
+    URL.revokeObjectURL(objectUrl);
+  }
+}
+
+export async function extractLegacyImageReport(
+  file: File,
+  onProgress?: LegacyPdfProgress,
+): Promise<LegacyPdfExtraction> {
+  onProgress?.("正在读取历史报告图片...");
+  const canvas = await loadImageFileToCanvas(file);
+  let worker: OcrWorker | null = null;
+  try {
+    worker = await createLocalOcrWorker(onProgress);
+    onProgress?.("正在识别图片中的报告标题、基础信息和阶段内容...");
+    const result = await withTimeout(
+      worker.recognize(canvas),
+      OCR_PAGE_TIMEOUT_MS,
+      "历史报告图片 OCR 识别超时",
+    );
+    const recognizedText = result.data.text.trim();
+    if (!recognizedText) throw new Error("图片中未识别到可回填文字");
+    return buildLegacyExtraction(file, recognizedText, { usedOcr: true });
+  } finally {
+    canvas.remove();
+    await worker?.terminate().catch(() => undefined);
   }
 }
 
@@ -159,33 +267,11 @@ export async function extractLegacyPdfReport(
     await pdfDocument.destroy();
   }
 
-  const extractedText = normalizeLegacyReportText(pageTexts.join("\n\n"));
-  const recoveredFieldText = recoverLegacyOcrFieldLines(extractedText);
-  const identity = inferLegacyPdfIdentity(
-    file.name,
-    title,
+  return buildLegacyExtraction(file, pageTexts.join("\n\n"), {
     author,
-    extractedText,
-  );
-  const metadataLines = [
-    identity.studentName ? `学生姓名：${identity.studentName}` : "",
-    identity.season ? `申请季度：${identity.season}` : "",
-    identity.applicationType ? `申请类型：${identity.applicationType}` : "",
-    identity.reportDate ? `报告日期：${identity.reportDate}` : "",
-    identity.reportTitle ? `报告标题：${identity.reportTitle}` : "",
-    identity.departmentLabel ? `部门标签：${identity.departmentLabel}` : "",
-  ].filter(Boolean);
-
-  return {
-    rawText: normalizeLegacyReportText(
-      [...metadataLines, recoveredFieldText, extractedText].filter(Boolean).join("\n"),
-    ),
-    recoveredFieldText,
     title,
-    author,
-    identity,
     schoolApplicationTables,
     usedOcr,
     ocrWarning,
-  };
+  });
 }
