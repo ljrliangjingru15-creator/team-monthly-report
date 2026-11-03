@@ -49,6 +49,10 @@ import {
   normalizeLegacyReportText,
   type LegacyPdfExtraction,
 } from "@/features/monthly-reports/legacy-pdf-report";
+import {
+  embedPngReportState,
+  readPngReportState,
+} from "@/features/monthly-reports/png-report-state";
 
 type EditableReportContent = {
   title: string;
@@ -1717,6 +1721,14 @@ function parsePreviousReportState(value: string | undefined | null) {
 
 async function readEmbeddedPreviousReportState(file: File) {
   const lowerName = file.name.toLowerCase();
+  if (file.type === "image/png" || lowerName.endsWith(".png")) {
+    try {
+      return parsePreviousReportState(await readPngReportState(file));
+    } catch {
+      return null;
+    }
+  }
+
   if (file.type === "application/pdf" || lowerName.endsWith(".pdf")) {
     let timeoutId: ReturnType<typeof setTimeout> | undefined;
     try {
@@ -3035,6 +3047,7 @@ export function MonthlyReportWorkspace() {
       additionalRecognizedFields: "",
       recognizedApplicationStatus: "",
       completedThisMonth:
+        legacyPdfReport?.imageAnalysis?.sectionContent.completedThisMonth ||
         (legacyPdfReport
           ? extractLegacyOcrSection(rawText, [
               "阶段性反馈",
@@ -3046,12 +3059,14 @@ export function MonthlyReportWorkspace() {
         extractReportSection(rawText, "本次阶段性进度") ||
         extractReportSection(rawText, "本月完成情况"),
       nextMonthPlan:
+        legacyPdfReport?.imageAnalysis?.sectionContent.nextMonthPlan ||
         (legacyPdfReport
           ? extractLegacyOcrSection(rawText, ["下一阶段计划", "下月计划"])
           : "") ||
         extractReportSection(rawText, "下一阶段计划") ||
         extractReportSection(rawText, "下月计划"),
       currentStageFocus:
+        legacyPdfReport?.imageAnalysis?.currentTimelineLabel ||
         extractReportSection(rawText, "当前阶段重点") ||
         extractReportSection(rawText, "本阶段重点"),
       nextStageFocus:
@@ -3059,6 +3074,7 @@ export function MonthlyReportWorkspace() {
         extractReportSection(rawText, "下一阶段重点") ||
         extractReportSection(rawText, "当前阶段重点和下一步建议"),
       clientTasks:
+        legacyPdfReport?.imageAnalysis?.sectionContent.clientTasks ||
         (legacyPdfReport
           ? extractLegacyOcrSection(rawText, [
               "需要学生/家庭配合",
@@ -3120,18 +3136,53 @@ export function MonthlyReportWorkspace() {
       setSchoolApplicationColumnWidths({});
       setSchoolApplicationRowHeights({});
     }
-    setModules((current) => ({
-      ...current,
-      basicInfo: Boolean(previousContent.studentBasicInfo) || current.basicInfo,
-      materialCollection:
-        Boolean(previousContent.materialCollectionStatus) || current.materialCollection,
-      completedThisMonth:
-        Boolean(previousContent.completedThisMonth) || current.completedThisMonth,
-      nextMonthPlan: Boolean(previousContent.nextMonthPlan) || current.nextMonthPlan,
-      clientTasks: Boolean(previousContent.clientTasks) || current.clientTasks,
-      schoolApplications:
-        Boolean(restoredSchoolApplicationTable) || current.schoolApplications,
-    }));
+    if (isImageReport && legacyPdfReport?.imageAnalysis) {
+      const detectedSections = new Set(
+        legacyPdfReport.imageAnalysis.detectedSections,
+      );
+      setModules((current) => ({
+        ...current,
+        stageFocus: detectedSections.has("stageFocus"),
+        summary: detectedSections.has("summary"),
+        timeline: detectedSections.has("timeline"),
+        basicInfo: detectedSections.has("basicInfo"),
+        materialCollection: detectedSections.has("materialCollection"),
+        schoolApplications:
+          detectedSections.has("schoolApplications") &&
+          Boolean(restoredSchoolApplicationTable),
+        completedThisMonth: detectedSections.has("completedThisMonth"),
+        nextMonthPlan: detectedSections.has("nextMonthPlan"),
+        clientTasks: detectedSections.has("clientTasks"),
+        attachments: detectedSections.has("attachments"),
+      }));
+      const compactSections = new Set(
+        legacyPdfReport.imageAnalysis.compactSections,
+      );
+      setReportModuleWidths((current) => {
+        const next = { ...current };
+        for (const section of legacyPdfReport.imageAnalysis?.detectedSections ?? []) {
+          if (section in next) {
+            next[section as ReportModuleKey] = compactSections.has(section)
+              ? "compact"
+              : "wide";
+          }
+        }
+        return next;
+      });
+    } else {
+      setModules((current) => ({
+        ...current,
+        basicInfo: Boolean(previousContent.studentBasicInfo) || current.basicInfo,
+        materialCollection:
+          Boolean(previousContent.materialCollectionStatus) || current.materialCollection,
+        completedThisMonth:
+          Boolean(previousContent.completedThisMonth) || current.completedThisMonth,
+        nextMonthPlan: Boolean(previousContent.nextMonthPlan) || current.nextMonthPlan,
+        clientTasks: Boolean(previousContent.clientTasks) || current.clientTasks,
+        schoolApplications:
+          Boolean(restoredSchoolApplicationTable) || current.schoolApplications,
+      }));
+    }
     setContent((current) => ({
       ...current,
       title: previousContent.title || current.title,
@@ -3142,9 +3193,18 @@ export function MonthlyReportWorkspace() {
           : current.departmentLabel),
       completedThisMonth:
         previousContent.completedThisMonth || current.completedThisMonth,
+      completedThisMonthTitle:
+        legacyPdfReport?.imageAnalysis?.sectionTitles.completedThisMonth ||
+        current.completedThisMonthTitle,
       nextMonthPlan: previousContent.nextMonthPlan || current.nextMonthPlan,
+      nextMonthPlanTitle:
+        legacyPdfReport?.imageAnalysis?.sectionTitles.nextMonthPlan ||
+        current.nextMonthPlanTitle,
       nextStageFocus: previousContent.nextStageFocus || current.nextStageFocus,
       clientTasks: previousContent.clientTasks || current.clientTasks,
+      clientTasksTitle:
+        legacyPdfReport?.imageAnalysis?.sectionTitles.clientTasks ||
+        current.clientTasksTitle,
       recognizedApplicationStatus:
         recognized.recognizedApplicationStatus ||
         previousContent.recognizedApplicationStatus ||
@@ -3170,7 +3230,7 @@ export function MonthlyReportWorkspace() {
     }));
     setRecognitionStatus(
       legacyPdfReport
-        ? `已读取${isImageReport ? "历史报告图片" : "旧版 PDF"}：${file.name}。通过${isImageReport ? "本地 OCR" : legacyPdfReport.usedOcr ? "文本层和本地 OCR" : "PDF 文本层"}回填内容，提取 ${fieldsFromReport.length} 个字段${restoredSchoolApplicationTable ? `和 ${restoredSchoolApplicationTable.rows.length} 条院校申请记录` : ""}。${legacyPdfReport.ocrWarning ? `图片页识别未完成（${legacyPdfReport.ocrWarning}），` : ""}请在导出前快速核对回填内容。`
+        ? `已读取${isImageReport ? "历史报告图片" : "旧版 PDF"}：${file.name}。通过${isImageReport ? legacyPdfReport.imageAnalysis ? "本地分区 OCR" : "本地 OCR" : legacyPdfReport.usedOcr ? "文本层和本地 OCR" : "PDF 文本层"}回填内容，提取 ${fieldsFromReport.length} 个字段${restoredSchoolApplicationTable ? `和 ${restoredSchoolApplicationTable.rows.length} 条院校申请记录` : ""}。${legacyPdfReport.ocrWarning ? `图片页识别未完成（${legacyPdfReport.ocrWarning}），` : ""}请在导出前快速核对回填内容。`
         : `已读取此前报告：${file.name}。已回填可识别内容，并提取 ${fieldsFromReport.length} 个可筛选字段。`,
     );
     setIsDirty(true);
@@ -4544,7 +4604,10 @@ ${renderedReportModules}
 
   async function buildExportBlob(format: ExportFormat) {
     if (format === "PNG") {
-      return renderReportDomPngBlob();
+      return embedPngReportState(
+        await renderReportDomPngBlob(),
+        serializePreviousReportState(buildPreviousReportState()),
+      );
     }
 
     const pngBlob = await renderReportDomPngBlob();

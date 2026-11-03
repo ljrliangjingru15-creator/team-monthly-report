@@ -27,6 +27,19 @@ export type LegacyPdfExtraction = {
   schoolApplicationTables: string[][][];
   usedOcr: boolean;
   ocrWarning: string;
+  imageAnalysis?: LegacyImageReportAnalysis;
+};
+
+export type LegacyImageReportAnalysis = {
+  compactSections: string[];
+  detectedSections: string[];
+  sectionTitles: Partial<
+    Record<"completedThisMonth" | "nextMonthPlan" | "clientTasks", string>
+  >;
+  sectionContent: Partial<
+    Record<"completedThisMonth" | "nextMonthPlan" | "clientTasks", string>
+  >;
+  currentTimelineLabel: string;
 };
 
 const legacyOcrFieldSpecs = [
